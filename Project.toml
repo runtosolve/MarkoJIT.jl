@@ -1,0 +1,4 @@
+name = "MarkoJIT"
+uuid = "a0750c5e-ed94-4724-bdb6-51a58ed81540"
+authors = ["Cris Moen <cris.moen@runtosolve.com>"]
+version = "0.1.0"
