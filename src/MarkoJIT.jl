@@ -40,7 +40,7 @@ function define_first_chord_hole_location(;joist_end_length)
 
 	if joist_end_length == 1.0u"sft_us"
 
-	#	Δx_chord_hole_from_joist_end = 
+	#	Δx_chord_hole_from_joist_end =  needs a special treatment I think, there is no bottom chord seat in this case 
 
 	elseif joist_end_length == 2.0u"sft_us"
 
@@ -48,7 +48,7 @@ function define_first_chord_hole_location(;joist_end_length)
 
 	elseif joist_end_length == 3.0u"sft_us"
 
-		#Δx_chord_hole_from_joist_end = 
+		Δx_chord_hole_from_joist_end = 2.76
 
 	elseif joist_end_length == 4.0u"sft_us"
 
