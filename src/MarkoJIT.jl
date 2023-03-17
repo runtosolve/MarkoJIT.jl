@@ -1,723 +1,311 @@
 module MarkoJIT
 
-using StructuresKit
-using Unitful, UnitfulUS
-using DataFrames
-using LinearAlgebra
+using Parameters, InstantFrame, CrossSection, Serialization 
 
 
+export Geometry
+include("Geometry.jl")
+using .Geometry
 
-function define_joist_ends(span_length, node_spacing)
+export Properties
+include("Properties.jl")
+using .Properties
 
-	num_nodes = span_length/node_spacing
+export Model
+include("Model.jl")
+using .Model
 
-	num_node_difference = num_nodes - floor(num_nodes)
+export Strength
+include("Strength.jl")
+using .Strength
 
-	if num_node_difference == 0.50
+@with_kw struct Inputs
 
-		joist_ends = (4.0u"sft_us", 2.0u"sft_us")
+    design_code::String
+    joist_dimensions::MarkoJIT.Geometry.JoistDimensions
+    chord_dimensions::MarkoJIT.Geometry.ChordDimensions
+    diagonal_dimensions::MarkoJIT.Geometry.DiagonalDimensions
+    bolt_properties::NamedTuple{(:name, :diameter, :hole_diameter, :Fnv), Tuple{String, Float64, Float64, Float64}}
+    shield_plate_dimensions::NamedTuple{(:t, :slotted_hole_edge_distance), Tuple{Float64, Float64}}
+    diagonal_sections::Vector{String}
+    diagonal_bracing::Vector{String}
+    bearing_seat_dimensions::MarkoJIT.Geometry.BearingSeatDimensions
+    chord_splice_dimensions::NamedTuple{(:t, :B, :H, :R), NTuple{4, Float64}} 
+    girder_dimensions::MarkoJIT.Geometry.Girder
+    girder_material_properties::NamedTuple{(:fy, :fu), Tuple{Float64, Float64}}
+    bearing_seat_weld_properties::NamedTuple{(:length, :Fxx, :t, :num_lines), Tuple{Float64, Float64, Float64, Int64}}
+    joist_material_properties::MarkoJIT.Properties.JoistMaterial
+    top_chord_connections::Vector{String}
+    bottom_chord_connections::Vector{String}
 
-	elseif num_node_difference == 0.00
+end
 
-		joist_ends = (2.0u"sft_us", 2.0u"sft_us")
+@with_kw struct ComponentDemands
 
-	elseif num_node_difference == 0.75
-
-		joist_ends = (1.0u"sft_us", 2.0u"sft_us")
-
-	elseif num_node_difference == 0.75
-		
-		joist_ends = (3.0u"sft_us", 2.0u"sft_us")
-
-	end
-
-	return joist_ends
+    diagonals::Vector{Float64}
+    top_chord::Vector{Float64}
+    bottom_chord::Vector{Float64}
+    bearing_seat_weld::Vector{Float64}
+    bearing_seat_compression_field::Vector{Float64}
+    bearing_seat_chord_connection::Vector{Float64}
 
 end
 
 
-function define_first_chord_hole_location(;joist_end_length)
+@with_kw struct DemandToCapacity
 
-	if joist_end_length == 1.0u"sft_us"
+    diagonals::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    top_chord_connections::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    bottom_chord_connections::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    top_chord::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    bottom_chord::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    top_chord_splice::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}} 
+    bottom_chord_splice::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Vector{Float64}, Int64, Float64}}
+    bearing_seat_weld_1::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    bearing_seat_weld_2::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    bearing_seat_compression_field_1::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    bearing_seat_compression_field_2::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    bearing_seat_chord_connection_1::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    bearing_seat_chord_connection_2::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
+    joist_deflection::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
 
-	#	Δx_chord_hole_from_joist_end =  needs a special treatment I think, there is no bottom chord seat in this case 
-
-	elseif joist_end_length == 2.0u"sft_us"
-
-		Δx_chord_hole_from_joist_end = 2.35u"sinch_us"
-
-	elseif joist_end_length == 3.0u"sft_us"
-
-		Δx_chord_hole_from_joist_end = 2.76
-
-	elseif joist_end_length == 4.0u"sft_us"
-
-		Δx_chord_hole_from_joist_end = 0.98u"sinch_us"
-
-	end
-	
-	return Δx_chord_hole_from_joist_end
-
-end
-
-function calculate_diagonal_length_and_angle(x1, x2, y1, y2)
-	
-	L = round(u"sinch_us", norm([(x2 - x1), (y2 - y1)]), sigdigits = 4)
-	
-	α = abs(round(rad2deg(atan((y2 - y1)/((x2 - x1)))), sigdigits=4)) #degrees
-
-	return L, α
+    all::Vector{Float64}
+    max::Float64
+    controlling::String
+    failure_location::Int64
 
 end
 
+@with_kw struct JoistSpan
 
-function calculate_typical_joist_diagonal_geometry(node_spacing, Δy_chord_to_hole, Δx_node_to_hole, joist_depth)
-
-	y1 = Δy_chord_to_hole
-	y2 = joist_depth - Δy_chord_to_hole
-
-	x1 = Δx_node_to_hole
-	x2 = node_spacing/2 - Δx_node_to_hole
-	
-	L_diagonal, α_diagonal = calculate_diagonal_length_and_angle(x1, x2, y1, y2)
-	
-	return L_diagonal, α_diagonal
-	
-end
-
-
-function calculate_bearing_seat_offset(joist_end_length, Δx_chord_hole_from_joist_end, Δx_bearing_seat_chord_holes)
-
-	if joist_end_length == 1.0u"sft_us"
-
-		Δx_seat = Δx_chord_hole_from_joist_end - Δx_bearing_seat_chord_holes[2]
-
-	elseif joist_end_length == 2.0u"sft_us"
-
-		Δx_seat = Δx_chord_hole_from_joist_end - Δx_bearing_seat_chord_holes[2]
-
-	elseif joist_end_length == 3.0u"sft_us"
-
-		Δx_seat = Δx_chord_hole_from_joist_end - Δx_bearing_seat_chord_holes[2]
-
-	elseif joist_end_length == 4.0u"sft_us"
-
-		Δx_seat = Δx_chord_hole_from_joist_end - Δx_bearing_seat_chord_holes[1]
-
-	end
-
-	Δx_seat = round(u"sinch_us", Δx_seat, sigdigits=3)
-	
-	return Δx_seat 
-
-end 
-
-function calculate_end_tension_diagonal_geometry(Δx_seat_far_bolt_hole, Δx_seat, x_support_to_bottom_chord, Δx_seat_near_bolt_hole, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth)
-	
-	x1 = Δx_seat_far_bolt_hole + Δx_seat
-	
-	x2 = round(u"sinch_us", x_support_to_bottom_chord + Δx_seat + Δx_seat_near_bolt_hole, sigdigits=4)
-	
-	y1 = round(u"sinch_us", (Δy_chord_seat_contact + Δy_seat_top_bolt), sigdigits = 4)
-	
-	y2 = joist_depth - Δy_chord_seat_contact - Δy_seat_top_bolt
-	
-	L_diagonal, α_diagonal = calculate_diagonal_length_and_angle(x1, x2, y1, y2)
-	
-	return L_diagonal, α_diagonal
-	
-end
-
-function calculate_end_compression_diagonal_geometry(joist_end_length, Δx_node_to_hole, x_support_to_bottom_chord, Δx_seat,  Δx_seat_far_bolt_hole, Δy_chord_to_hole, joist_depth, Δy_chord_seat_contact, Δy_seat_top_bolt)
-
-	x1 = joist_end_length - Δx_node_to_hole
-	
-	x2 = x_support_to_bottom_chord + Δx_seat + Δx_seat_far_bolt_hole 
-	
-	y1 = Δy_chord_to_hole
-	
-	y2 = joist_depth - Δy_chord_seat_contact - Δy_seat_top_bolt
-	
-	L_diagonal, α_diagonal = calculate_diagonal_length_and_angle(x1, x2, y1, y2)
-	
-	return L_diagonal, α_diagonal
-	
-end
-
-function calculate_joist_diagonal_geometry(joist_ends, Δx_chord_hole_from_joist_end_1, Δx_chord_hole_from_joist_end_2, Δx_seat_1, Δx_seat_2, node_spacing, Δy_chord_to_hole, Δx_node_to_hole, joist_spacing, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, Δx_bearing_seat_chord_holes, joist_depth)
-
-	#typical diagonal
-	L_diagonal, α_diagonal = calculate_typical_joist_diagonal_geometry(node_spacing, Δy_chord_to_hole, Δx_node_to_hole, joist_depth)
-
-	#tension diagonal, end No. 1
-	L_end_diagonal_tension_1, α_end_diagonal_tension_1 = calculate_end_tension_diagonal_geometry(Δx_seat_far_bolt_hole, Δx_seat_1, x_support_to_bottom_chord, Δx_seat_near_bolt_hole, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth)
-	
-	#tension diagonal, end No. 2
-	L_end_diagonal_tension_2, α_end_diagonal_tension_2 = calculate_end_tension_diagonal_geometry(Δx_seat_far_bolt_hole, Δx_seat_2, x_support_to_bottom_chord, Δx_seat_near_bolt_hole, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth)
-
-	#compression diagonal, end No. 1
-	L_end_diagonal_compression_1, α_end_diagonal_compression_1 = calculate_end_compression_diagonal_geometry(joist_ends[1], Δx_node_to_hole, x_support_to_bottom_chord, Δx_seat_1, Δx_seat_far_bolt_hole, Δy_chord_to_hole, joist_depth, Δy_chord_seat_contact, Δy_seat_top_bolt)
-
-	#compression diagonal, end No. 2
-		L_end_diagonal_compression_2, α_end_diagonal_compression_2 = calculate_end_compression_diagonal_geometry(joist_ends[2], Δx_node_to_hole, x_support_to_bottom_chord, Δx_seat_2, Δx_seat_far_bolt_hole, Δy_chord_to_hole, joist_depth, Δy_chord_seat_contact, Δy_seat_top_bolt)
-
-	#consolidate into named tuple
-
-	α = (typical=α_diagonal, T1 = α_end_diagonal_tension_1,  C1 = α_end_diagonal_compression_1, T2 = α_end_diagonal_tension_2, C2 = α_end_diagonal_compression_2)
-
-	L = (typical=L_diagonal, T1 = L_end_diagonal_tension_1,  C1 = L_end_diagonal_compression_1, T2 = L_end_diagonal_tension_2, C2 = L_end_diagonal_compression_2)
-
-	return L, α
+    inputs::Inputs
+    properties::Properties.Section
+    model::InstantFrame.Model
+    strength::Strength.Components
+    deflection::Float64
+    demand::ComponentDemands
+    demand_to_capacity::DemandToCapacity
+    design_load::Float64
 
 end
-	
-function calculate_cross_section_coordinates(;ΔL, Θ, n, radius, n_radius, t)
 
-	#Define the cross-section feature.  
-	closed_or_open = 1
-	feature = CrossSection.Feature(ΔL, Θ, n, radius, n_radius, closed_or_open)
-	
-	#Calculate the out-to-out surface coordinates.
-	xcoords_out, ycoords_out = CrossSection.get_xy_coordinates(feature)
-	
-	#Shift coordinates.
-	xcoords_out = xcoords_out .- maximum(xcoords_out)/2
-	ycoords_out = ycoords_out .- minimum(ycoords_out)
 
-	#Calculate surface normals.
-	unitnormals = CrossSection.surface_normals(xcoords_out, ycoords_out, closed_or_open)
+function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections)
+
+    inputs = Inputs(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections)
+
+
+
+    ####calculate section properties 
+
+    #chord section properties
+    chord_section_properties = Properties.calculate_chord_section_properties(chord_dimensions)
+
+    #diagonal section properties
+    diagonal_section_geometry = [Geometry.define_diagonal_cross_section_geometry(diagonal_dimensions.B[i], diagonal_dimensions.H[i], diagonal_dimensions.R[i], diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
+
+    diagonal_section_properties = [CrossSection.Properties.open_thin_walled(diagonal_section_geometry[i].center, diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
+
+
+    properties = Properties.Section(chord=chord_section_properties, diagonals=diagonal_section_properties)
+
+
+    #define joist geometry 
+    coordinates = Model.define_joist_model_coordinates(joist_dimensions, chord_section_properties, bearing_seat_dimensions, girder_dimensions, chord_dimensions)
+
+    element_connectivity, elements_by_component = Model.define_joist_model_element_connectivity(coordinates)
+
+    elements_by_section, element_sections = Model.define_element_types(elements_by_component, diagonal_sections)
+
+    model = Model.run_joist_analysis_model(coordinates, element_connectivity, elements_by_component, diagonal_dimensions, diagonal_section_properties, chord_section_properties, diagonal_sections)
+
+
+    ########
+    #### calculate diagonal strengths 
+
+    #tension 
+
+    diagonal_tensile_strength = Strength.calculate_all_diagonal_tensile_strengths(diagonal_sections, diagonal_dimensions, diagonal_section_properties, joist_material_properties, bolt_properties.hole_diameter, design_code)
+
+
+    #compression 
+
+    #diagonal cross-section local buckling properties 
+    Pcrℓ_diagonal, diagonal_section_local_buckling = Properties.calculate_diagonal_local_buckling_load(diagonal_section_geometry, diagonal_dimensions, joist_material_properties)
+
+    #diagonal global buckling 
+    Pcre_diagonal, diagonal_global_buckling = Strength.calculate_diagonal_global_buckling(model, diagonal_sections, diagonal_bracing, diagonal_dimensions, diagonal_section_geometry, joist_material_properties)
+
+
+    #diagonal compressive strength 
+    diagonal_compressive_strength = Strength.calculate_all_diagonal_compressive_strengths(diagonal_sections, diagonal_dimensions, Pcre_diagonal, Pcrℓ_diagonal, diagonal_section_properties, joist_material_properties.fy, design_code)
+
+    ####chord strength
+    chord_compressive_strength = Strength.calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, chord_dimensions)
+
+    #chord tensile strength 
+    chord_tensile_strength = Strength.calculate_chord_tensile_strength(chord_section_properties, chord_dimensions, joist_material_properties, design_code)
+
+    #chord splice 
+    chord_splice_strength = Strength.calculate_chord_splice_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, chord_splice_dimensions.t, chord_dimensions.t)
+
+    #bearing seat weld strength 
+    bearing_seat_weld_strength = Strength.calculate_bearing_seat_weld_strength(bearing_seat_weld_properties, bearing_seat_dimensions, joist_material_properties, girder_dimensions, girder_material_properties, design_code)
+
+    #bearing seat compression field strength
+    bearing_seat_compression_field_strength = Strength.calculate_bearing_seat_compression_field_strength(joist_material_properties, bearing_seat_dimensions, design_code)
+
+    #bearing seat top chord connection 
+    num_bolts = 4
+    bearing_seat_chord_connection_strength = Strength.calculate_bolted_connection_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, chord_dimensions.t, num_bolts)
+
+    #calculate top chord connection strengths 
+    top_chord_connection_strengths = Strength.calculate_connection_strength_series(top_chord_connections, diagonal_sections, diagonal_dimensions, bolt_properties, joist_material_properties, design_code, bearing_seat_dimensions, shield_plate_dimensions, chord_dimensions)
+
+    #calculate bottom chord connection strengths 
+    bottom_chord_connection_strengths = Strength.calculate_connection_strength_series(bottom_chord_connections, diagonal_sections, diagonal_dimensions, bolt_properties, joist_material_properties, design_code, bearing_seat_dimensions, shield_plate_dimensions, chord_dimensions)
+
+
+
+    #calculate diagonal demands
+    diagonal_elements = findall(element->element==1, occursin.("diagonal", model.inputs.element.cross_section))
+    diagonal_demands = [model.solution.forces[diagonal_elements[i]][7] for i in eachindex(diagonal_elements)]
+
+    #calculate diagonal strength 
+    eRn_diagonals = Vector{Float64}(undef, length(diagonal_elements))
+    for i in eachindex(diagonal_elements)
+
+        if diagonal_demands[i] > 0.0  #tension 
+
+            eRn_diagonals[i] = diagonal_tensile_strength[i].eTn
+
+        else diagonal_demands[i] < 0.0
+
+            eRn_diagonals[i] = diagonal_compressive_strength[i].ePnℓ
+
+        end
+
+    end
+
+
+    function calculate_demand_to_capacity(demand, capacity)
+
+        DC = demand ./ capacity
+        max_DC_location = argmax(DC)
+        max_DC = maximum(DC)
+
+        DC_details = (DC=DC, max_location=max_DC_location, max_DC = max_DC)
+
+        return DC_details
+
+    end
+
+
+    diagonal_DC = calculate_demand_to_capacity(abs.(diagonal_demands)/1000, eRn_diagonals)
+
+    eRn_top_chord_connections = [top_chord_connection_strengths[i].eRn for i in eachindex(top_chord_connection_strengths)]
+    top_chord_connection_DC = calculate_demand_to_capacity(abs.(diagonal_demands)/1000, eRn_top_chord_connections)
+
+    eRn_bottom_chord_connections = [bottom_chord_connection_strengths[i].eRn for i in eachindex(bottom_chord_connection_strengths)]
+    bottom_chord_connection_DC = calculate_demand_to_capacity(abs.(diagonal_demands)/1000, eRn_bottom_chord_connections)
+
+
+    eRn_top_chord = chord_compressive_strength.ePn
+    top_chord_elements = findall(element->element==1, occursin.("top chord", model.inputs.element.cross_section))
+    top_chord_compression_demand = [model.solution.forces[top_chord_elements[i]][7] for i in eachindex(top_chord_elements)]
+    top_chord_compression_DC = calculate_demand_to_capacity(abs.(top_chord_compression_demand)./1000, fill(eRn_top_chord, length(top_chord_compression_demand)))
+
+    eRn_bottom_chord = chord_tensile_strength.eTn
+    bottom_chord_elements = findall(element->element==1, occursin.("bottom chord", model.inputs.element.cross_section))
+    bottom_chord_tension_demand = [model.solution.forces[bottom_chord_elements[i]][7] for i in eachindex(bottom_chord_elements)]
+    bottom_chord_tension_DC = calculate_demand_to_capacity(abs.(bottom_chord_tension_demand)./1000, fill(eRn_bottom_chord, length(bottom_chord_tension_demand)))
+
+    eRn_chord_splice = chord_splice_strength.eRn
+    bottom_chord_splice_DC = calculate_demand_to_capacity(abs.(bottom_chord_tension_demand)./1000, fill(eRn_chord_splice, length(bottom_chord_tension_demand)))
+    top_chord_splice_DC = calculate_demand_to_capacity(abs.(top_chord_compression_demand)./1000, fill(eRn_chord_splice, length(top_chord_compression_demand)))
+
+    eRn_bearing_seat_weld = bearing_seat_weld_strength.eRn
+    bearing_seat_weld_DC_1 = calculate_demand_to_capacity(abs.(model.solution.reactions[1][1])./1000, eRn_bearing_seat_weld)
+    bearing_seat_weld_DC_2 = calculate_demand_to_capacity(abs.(model.solution.reactions[2][1])./1000, eRn_bearing_seat_weld)
+
+    top_of_girder_elements = findall(element->element==1, occursin.("top of girder", model.inputs.element.cross_section))
+    eRn_bearing_compression_field = bearing_seat_compression_field_strength.eRn
+    bearing_seat_compression_field_DC_1 = calculate_demand_to_capacity(abs.(model.solution.forces[top_of_girder_elements[1]][1])./1000, eRn_bearing_compression_field)
+    bearing_seat_compression_field_DC_2 = calculate_demand_to_capacity(abs.(model.solution.forces[top_of_girder_elements[2]][1])./1000, eRn_bearing_compression_field)
+
+    eRn_bearing_seat_chord_connection = bearing_seat_chord_connection_strength.eRn  
+    bearing_seat_chord_connection_DC_1 = calculate_demand_to_capacity(abs.(model.solution.forces[top_chord_elements[2]][1])./1000, eRn_bearing_seat_chord_connection)
+    bearing_seat_chord_connection_DC_2 = calculate_demand_to_capacity(abs.(model.solution.forces[top_chord_elements[end-1]][1])./1000, eRn_bearing_seat_chord_connection)
+
+
+
+    bearing_seat_weld_demands = [abs.(model.solution.reactions[1][1])./1000, abs.(model.solution.reactions[2][1])./1000]
+    bearing_seat_compression_field_demands = [abs.(model.solution.forces[top_of_girder_elements[1]][1])./1000, abs.(model.solution.forces[top_of_girder_elements[2]][1])./1000]
+    bearing_seat_chord_connection_demands = [abs.(model.solution.forces[top_chord_elements[2]][1])./1000, abs.(model.solution.forces[top_chord_elements[end-1]][1])./1000]
+    demand = ComponentDemands(diagonal_demands, top_chord_compression_demand, bottom_chord_tension_demand, bearing_seat_weld_demands, bearing_seat_compression_field_demands, bearing_seat_chord_connection_demands)
+
+
+    strength = Strength.Components(diagonal_tensile_strength, diagonal_compressive_strength, chord_compressive_strength, chord_tensile_strength, chord_splice_strength, bearing_seat_weld_strength, bearing_seat_compression_field_strength, bearing_seat_chord_connection_strength, top_chord_connection_strengths, bottom_chord_connection_strengths, eRn_diagonals, eRn_top_chord_connections, eRn_bottom_chord_connections, eRn_top_chord, eRn_bottom_chord, eRn_chord_splice, eRn_bearing_seat_weld, eRn_bearing_compression_field, eRn_bearing_seat_chord_connection)
+
+
+    Δ_joist = maximum(abs.([model.solution.displacements[i][2] for i in eachindex(model.solution.displacements)]))
+
+    argmax(abs.([model.solution.displacements[i][2] for i in eachindex(model.solution.displacements)]))
+
+    joist_deflection_DC = calculate_demand_to_capacity(Δ_joist, joist_dimensions.span_length/180)
+
+    DC_all = [diagonal_DC.max_DC, top_chord_connection_DC.max_DC, bottom_chord_connection_DC.max_DC, top_chord_compression_DC.max_DC, bottom_chord_tension_DC.max_DC, bottom_chord_splice_DC.max_DC, top_chord_splice_DC.max_DC, bearing_seat_weld_DC_1.max_DC, bearing_seat_weld_DC_2.max_DC, bearing_seat_compression_field_DC_1.max_DC, bearing_seat_compression_field_DC_2.max_DC, bearing_seat_chord_connection_DC_1.max_DC, bearing_seat_chord_connection_DC_2.max_DC, joist_deflection_DC.max_DC]
+
+    DC_labels = ["diagonal", "top chord to diagonal connection", "bottom chord to diagonal connection", "top chord compression", "bottom chord tension", "bottom chord splice", "top chord splice", "bearing seat weld end 1", "bearing seat weld end 2", "bearing seat compression field end 1", "bearing seat compression field end 2", "bearing seat chord connection end 1", "bearing seat chord connection end 2", "joist deflection"]
+
+    max_DC = maximum(DC_all)
+
+    joist_strength = 1.0/max_DC  #lbs/ft 
+    controlling_DC = DC_labels[argmax(DC_all)]
+
+    if controlling_DC == "diagonal"
+
+        failure_location = diagonal_DC.max_location
+
+    elseif controlling_DC == "top chord to diagonal connection"
+
+        failure_location = top_chord_connection_DC.max_location
+
+    elseif controlling_DC == "bottom chord to diagonal connection"
+
+        failure_location = bottom_chord_connection_DC.max_location
+
+    elseif controlling_DC == "top chord compression"
+
+        failure_location = top_chord_compression_DC.max_location  
+
+    elseif controlling_DC == "bottom chord tension"
+
+        failure_location = bottom_chord_tension_DC.max_location 
+
+    elseif controlling_DC == "bottom chord splice"
+
+        failure_location = bottom_chord_splice_DC.max_location 
+
+    elseif controlling_DC == "top chord splice"
+
+        failure_location = top_chord_splice_DC.max_location
         
-	#Calculate node normals.	
-	nodenormals = CrossSection.avg_node_normals(unitnormals, closed_or_open)
-    
-	#Go from outside surface to centerline coordinates.
-	xcoords_center, ycoords_center = CrossSection.xycoords_along_normal(xcoords_out, ycoords_out, nodenormals, t/2)
-	
-	#Calculate the inside surface.
-	xcoords_in, ycoords_in = CrossSection.xycoords_along_normal(xcoords_out, ycoords_out, nodenormals, t)
-	
-	coords_out = [xcoords_out, ycoords_out]
-	coords_centerline = [xcoords_center, ycoords_center]
-	coords_in = [xcoords_in, ycoords_in]
-	
-	return coords_out, coords_centerline, coords_in
-	
-end
+    else
 
-function define_cross_section_element_connectivity(;num_elem, t)
-		
-	element_info = []
-	
-	for i = 1:num_elem
-		
-		if i == 1
-			
-			element_info = [[i, i+1, t]']
-			
-		else
-			
-			element_info = [element_info; [[i, i+1, t]']]
-			
+        failure_location = NaN
 
-		end
-		
-	end
-		
+    end
 
-	element_info = vcat(element_info...)
-	
-	return element_info
+
+    demand_to_capacity = DemandToCapacity(diagonal_DC, top_chord_connection_DC, bottom_chord_connection_DC, top_chord_compression_DC, bottom_chord_tension_DC, top_chord_splice_DC, bottom_chord_splice_DC, bearing_seat_weld_DC_1, bearing_seat_weld_DC_2, bearing_seat_compression_field_DC_1, bearing_seat_compression_field_DC_2, bearing_seat_chord_connection_DC_1, bearing_seat_chord_connection_DC_2, joist_deflection_DC, DC_all, max_DC, controlling_DC, failure_location)
+
+    joist_span = JoistSpan(inputs, properties, model, strength, Δ_joist, demand, demand_to_capacity, joist_strength)
+
+    return joist_span
 
 end
 
-function calculate_column_critical_elastic_global_buckling_stress(;E, I, L, A)
-	
-	Fcre = π^2*E*I/L^2/A
-	
-end
-
-function create_CUFSM_node(coords_centerline)
-	
-	num_cross_section_nodes = size(coords_centerline[1])[1]
-	node = zeros(Float64, (num_cross_section_nodes, 8))
-	node[:, 1] .= 1:num_cross_section_nodes
-    node[:, 2] .= ustrip(coords_centerline[1])
-	node[:, 3] .= ustrip(coords_centerline[2])
-	node[:, 4:7] .= ones(num_cross_section_nodes,4)
-	
-	return node
-	
-end
-
-function create_CUFSM_elem(;element_info)
-	
-	num_cross_section_elements = size(element_info)[1]
-	elem = zeros(Float64, (num_cross_section_elements, 5))
-	elem[:, 1] = 1:num_cross_section_elements
-	elem[:, 2:4] .= ustrip.(element_info)
-	elem[:, 5] .= ones(num_cross_section_elements) * 100
-	
-	return elem
-end
-
-function grab_CUFSM_load_factor(;curve)
-	
-	num_lengths = size(curve)[1]
-	load_factor = [curve[i,1][2] for i=1:num_lengths]
-	
-	return load_factor
-	
-end
-
-function calculate_web_diagonal_compressive_strength(ΔL, Θ, n, radius, n_radius, t, Fy, E, L_unbraced, design_code)
-	
-	
-	coords_out, coords_centerline, coords_in = calculate_cross_section_coordinates(ΔL=ΔL, Θ=Θ, n=n, radius=radius, n_radius=n_radius, t=t)
-		
-	element_info = define_cross_section_element_connectivity(num_elem=length(coords_out[1])-1, t=t)
-	
-	web_diagonal_section_properties = CUFSM.cutwp_prop2([ustrip(coords_centerline[1]) ustrip(coords_centerline[2])], ustrip.(element_info))
-	
-	A_diagonal = round(u"sinch_us^2", web_diagonal_section_properties.A*1.0*u"sinch_us^2", sigdigits=3)
-		
-	Py_diagonal = round(u"lbf", A_diagonal * Fy, sigdigits=4)
-		
-	Fcre_diagonal = round(u"lbf/sinch_us^2", calculate_column_critical_elastic_global_buckling_stress(;E=E, I=web_diagonal_section_properties.Ixx*u"sinch_us^4", L=L_unbraced, A=A_diagonal), sigdigits=4)
-		
-	Pne_diagonal, ePne_diagonal = round.(u"lbf", AISIS10016.e2(Fcre=Fcre_diagonal, Fy=Fy, Ag=A_diagonal, design_code=design_code), sigdigits=4)
-		
-	#no local buckling influence
-	Pnℓ_diagonal = Pne_diagonal
-	ePnℓ_diagonal = ePne_diagonal
-	
-	return  Pnℓ_diagonal, ePnℓ_diagonal
-		
-end
-
-function calculate_web_diagonal_tensile_strength(cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal,t, Fy, Fu, bolt_hole_diameter, design_code)
-
-    coords_out, coords_centerline, coords_in = calculate_cross_section_coordinates(ΔL=cross_section_segments_diagonal, Θ=cross_section_segment_angles_diagonal, n=n_diagonal, radius=radius_diagonal, n_radius=n_radius_diagonal, t=t)
-        
-    element_info = define_cross_section_element_connectivity(num_elem=length(coords_out[1])-1, t=t)
-
-    web_diagonal_section_properties = CUFSM.cutwp_prop2([ustrip(coords_centerline[1]) ustrip(coords_centerline[2])], ustrip.(element_info))
-
-    A_diagonal = round(u"sinch_us^2", web_diagonal_section_properties.A*1.0*u"sinch_us^2", sigdigits=3)
-
-    Tn_y, eTn_y = round.(u"lbf", AISIS10016.d21(Ag=A_diagonal, Fy=Fy, design_code=design_code), sigdigits=4)
-
-    Anet_diagonal = round(u"sinch_us^2", A_diagonal - 2 * bolt_hole_diameter * t_diagonal, sigdigits=3)
-
-    Tn_u_diagonal, eTn_u_diagonal = round.(u"lbf", AISIS10016.d31(An=Anet_diagonal, Fu=Fu, design_code=design_code), sigdigits=4)
-
-    eTn_diagonal = minimum([eTn_y_diagonal, eTn_u_diagonal])
-
-    return eTn_diagonal
-
-end	
-
-function define_chord_surfaces(;node, t)
-	
-	xcoords_center = node[:, 2]
-	ycoords_center = node[:, 3]
-	
-	closed_or_open = 1
-	unitnormals = CrossSection.surface_normals(xcoords_center, ycoords_center, closed_or_open)
-	nodenormals = CrossSection.avg_node_normals(unitnormals, closed_or_open)
-	
-	xcoords_out, ycoords_out = CrossSection.xycoords_along_normal(xcoords_center, ycoords_center, nodenormals, -t/2)
-	
-	xcoords_in, ycoords_in = CrossSection.xycoords_along_normal(xcoords_center, ycoords_center, nodenormals, t/2)
-	
-	coords_out = [xcoords_out, ycoords_out]
-	coords_centerline = [xcoords_center, ycoords_center]
-	coords_in = [xcoords_in, ycoords_in]
-	
-	return coords_out, coords_centerline, coords_in
-	
-end
-	
-function unreinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_chord, Fu, design_code)
-	
-	
-	Pn_bolt, ePn_bolt = round.(u"lbf", AISIS10016.appAj341(Ab = π * (bolt_diameter/2)^2, Fn = Fnv, design_code = design_code), sigdigits=4)
-	
-	C = AISIS10016.tablej3311(d=bolt_diameter, t=t_chord, hole_shape = "standard hole")
-	
-	mf = AISIS10016.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb, ePnb = round.(u"lbf", AISIS10016.j3311(C=C, mf=mf, d=bolt_diameter, t=t_chord, Fu=Fu, design_code=design_code), sigdigits=4)
-	
-	ePn = minimum([ePn_bolt; ePnb])
-	
-	ePn_unreinforced_connection = minimum([ePn_bolt; ePnb]) .* 2
-	
-	return ePn_unreinforced_connection
-	
-end
-
-function reinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_shield_plate, t_diagonal, Fu, design_code)
-		
-	Pn_bolt, ePn_bolt = round.(u"lbf", AISIS10016.appAj341(Ab = π * (bolt_diameter/2)^2, Fn = Fnv, design_code = design_code), sigdigits=4)
-	
-	C = AISIS10016.tablej3311(d=bolt_diameter, t=t_chord, hole_shape = "standard hole")
-	
-	mf = AISIS10016.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb_shield_plate, ePnb_shield_plate = round.(u"lbf", AISIS10016.j3311(C=C, mf=mf, d=bolt_diameter, t=t_shield_plate, Fu=Fu, design_code=design_code), sigdigits=4)
-	
-	Pnb_diagonal, ePnb_diagonal = round.(u"lbf", AISIS10016.j3311(C=C, mf=mf, d=bolt_diameter, t=t_diagonal, Fu=Fu, design_code=design_code), sigdigits=4)
-	
-	Anv = round(u"sinch_us^2", 0.59u"sinch_us" * t_shield_plate * 2, sigdigits=3)
-	
-	Pnv, ePnv = AISIS10016.j611(Anv, Fu, design_code, "bolts")
-	
-	reinforced_connection_limit_state_strengths = round.(u"lbf", [ePn_bolt*4; ePnv*2+ ePnb_diagonal*2; ePnb_diagonal*2 + ePnb_shield_plate*2], sigdigits=4)
-	
-	eRn_reinforced_connection = minimum(reinforced_connection_limit_state_strengths)
-	
-	return eRn_reinforced_connection
-	
-end	
-
-function calculate_compression_field_angle(Δx_chord_hole_from_joist_end, Δx_seat,  Δx_seat_far_bolt_hole, girder_flange_width, Δy_chord_seat_contact, h_seat, α_end_diagonal_tension)
-		
-	x_seat_top_bolt = Δx_seat_far_bolt_hole + Δx_seat
-	
-	x_seat_centerline = (girder_flange_width/2 - Δx_seat)/2 + Δx_seat
-
-	y_seat_centerline = Δy_chord_seat_contact + h_seat
-
-	x_seat_top_node = round(u"sinch_us", x_seat_top_bolt - (Δy_seat_top_bolt/tan(deg2rad(α_end_diagonal_tension))), sigdigits=4)
-
-	y_seat_top_node = Δy_chord_seat_contact
-	
-	L_seat_compression_field, θ_seat_compression_field = calculate_diagonal_length_and_angle(x_seat_centerline, x_seat_top_node, y_seat_centerline, y_seat_top_node)
-	
-	return L_seat_compression_field, θ_seat_compression_field
-	
-end
-
-function single_shear_bolt_strength(;d_bolt, t_ply, Fu_ply, Fn_bolt, design_code)
-	
-	
-	Pn_bolt, ePn_bolt = AISIS10016.appAj341(Ab = π * (d_bolt/2)^2, Fn = Fn_bolt, design_code = design_code)
-	
-	C = AISIS10016.tablej3311(d=d_bolt, t=t_ply, hole_shape = "standard hole")
-	
-	mf = AISIS10016.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb, ePnb = AISIS10016.j3311(C=C, mf=mf, d=d_bolt, t=t_ply, Fu=Fu_ply, design_code=design_code)
-	
-	ePn = minimum([ePn_bolt; ePnb])
-	
-	eRn = ePn 
-	
-	return eRn
-	
-end
-
-function plate_buckling_stress(;k, E, ν, t, b)
-
-	fcr = k*π^2*E/(12*(1-ν^2))*(t/b)^2
-	
-	return fcr
-	
-end
-
-function bearing_seat_demands(; α, θ, R)
-	
-	A = [0. 0. 0. 1.0
-		 1. -cos(α) 0. -cos(θ)
-		 0. -sin(α) 0. sin(θ)
-		 1.  0.  -1. 0.]
-	
-	B = [R/sin(θ) 0.0 0.0 0.0]'
-	
-	Q = A \ B
-	
-	return Q
-	
-end
-
-function bearing_seat_reaction(Q, eRc, eRd, eRs, eRw)
-
-	ePn_all = [eRc/Q[1], eRd/Q[2], eRs/Q[3], eRw/Q[4]]
-	
-	return ePn_all
-	
-end
-
-function bearing_seat_strength_gravity(Δx_seat,  Δx_seat_far_bolt_hole, girder_flange_width, Δy_chord_seat_contact, h_seat, α_end_diagonal_tension, bolt_diameter, t_chord, Fu, Fnv, design_code, num_top_chord_bolts, t_end_tension_diagonal, L_seat_weld, Fu_support, t_seat_weld, Fxx_weld, E, ν, compression_field_width)
-
-	L_seat_compression_field, θ_compression_field = calculate_compression_field_angle( Δx_seat,  Δx_seat_far_bolt_hole, girder_flange_width, Δy_chord_seat_contact, h_seat, α_end_diagonal_tension)
-	
-	eRc = single_shear_bolt_strength(d_bolt=bolt_diameter, t_ply=t_chord, Fu_ply=Fu, Fn_bolt=Fnv, design_code=design_code) * num_top_chord_bolts
-	
-	eRd = round(u"lbf", single_shear_bolt_strength(d_bolt=bolt_diameter, t_ply=minimum([t_seat, t_end_tension_diagonal]), Fu_ply=Fu, Fn_bolt=Fnv, design_code=design_code) * 4, sigdigits = 4)
-	
-	Rs, eRs = AISIS10016.j25(L=L_seat_weld, t1=t_seat, Fu1=Fu, t2=t_support, Fu2=Fu_support, tw=0.707*t_seat_weld, Fxx=Fxx_weld, loading_direction="longitudinal", design_code=design_code) .* 2
-	
-	fcrℓ = round(u"lbf/sinch_us/sinch_us", plate_buckling_stress(;k=4.0, E=E, ν=ν, t=t_seat, b=compression_field_width), sigdigits = 4)
-	
-	Rw, eRw = AISIS10016.e321(Pne = t_seat * compression_field_width * Fy, Pcrℓ = t_seat * compression_field_width * fcrℓ, design_code=design_code) .* 2
-	
-	Q = bearing_seat_demands(α=deg2rad(α_end_diagonal_tension), θ=deg2rad(θ_compression_field), R=1.0)
-	
-	ePn_seat_all = bearing_seat_reaction(Q, eRc, eRd, eRs, eRw)
-	
-	ePn_seat = round(u"lbf", minimum(ePn_seat_all), sigdigits = 4)
-	
-	return ePn_seat
-	
-end
-
-function calculate_joist_load_diagonal_compression_limit_state(span_length, joist_end_length, α_diagonal, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, L_diagonal, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate; node_connection)
-
-	q = 1.0u"lbf/sft_us"
-
-	V = uconvert(u"lbf", q * span_length / 2 - (joist_end_length) * q)
-
-	Pu = V/sin(deg2rad(α_diagonal))
-	
-	Pn_diagonal, ePn_diagonal = calculate_web_diagonal_compressive_strength(cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, L_diagonal, design_code)
-
-	eQn_diagonal = round(u"lbf/sft_us", ePn_diagonal/Pu*u"lbf/sft_us", sigdigits=3)
-
-	if node_connection == "unreinforced"
-	
-		ePn_connection = unreinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_chord, Fu, design_code)
-
-	elseif node_connection == "reinforced"
-		
-		ePn_connection = reinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_shield_plate, t_diagonal, Fu, design_code)
-
-	end
-
-	eQn_connection = round(u"lbf/sft_us", ePn_connection/Pu*u"lbf/sft_us", sigdigits=3)
-
-	return eQn_diagonal, eQn_connection 
-
-end
-
-function calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node, α_diagonal, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate; node_connection)
-
-	q = 1.0u"lbf/sft_us"
-
-	V = uconvert(u"lbf", q * span_length / 2 - (x_top_chord_to_node) * q)
-
-	Pu = V/sin(deg2rad(α_diagonal))
-	
-	ePn_diagonal = calculate_web_diagonal_tensile_strength(cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, Fu, bolt_hole_diameter, design_code)
-
-	eQn_diagonal = round(u"lbf/sft_us", ePn_diagonal/Pu*u"lbf/sft_us", sigdigits=3)
-
-	if node_connection=="unreinforced"
-		
-		ePn_connection = unreinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_chord, Fu, design_code)
-
-	elseif node_connection=="reinforced"
-
-		ePn_connection = reinforced_truss_node_connection_strength(bolt_diameter, Fnv, t_shield_plate, t_diagonal, Fu, design_code)
-
-	end
-	
-	eQn_connection = round(u"lbf/sft_us", ePn_connection/Pu*u"lbf/sft_us", sigdigits=3)
-
-	return eQn_diagonal, eQn_connection 
-
-end
-
-function calculate_MIN_joist_shear_strength(span_length, joist_ends, α, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L, design_code, bolt_diameter, Fnv, t_chord, Fu, t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1, t_end_diagonal_tension_2, t_shield_plate)
-
-
-	eQn_end_diagonal_compression_1, eQn_connection_end_diagonal_compression_1 = calculate_joist_load_diagonal_compression_limit_state(span_length, joist_ends[1], α.C1, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L.C1, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-	eQn_end_diagonal_compression_2, eQn_connection_end_diagonal_compression_2 = calculate_joist_load_diagonal_compression_limit_state(span_length, joist_ends[2], α.C2, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_2, Fy, E, L.C2, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-		x_top_chord_to_node_typical_diagonal = uconvert(u"sinch_us", node_spacing + joist_ends[2]) 
-	
-	eQn_typical_diagonal_compression, eQn_connection_typical_diagonal_compression = calculate_joist_load_diagonal_compression_limit_state(span_length, x_top_chord_to_node_typical_diagonal, α.typical, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, L.typical, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-	x_top_chord_to_node_first_tension_diagonal = 0.0u"sinch_us"
-	
-	eQn_end_diagonal_tension_1, eQn_connection_end_diagonal_tension_1 = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_first_tension_diagonal, α.T1, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_tension_1, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-	eQn_end_diagonal_tension_2, eQn_connection_end_diagonal_tension_2 = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_first_tension_diagonal, α.T2, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_tension_2, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-	eQn_typical_diagonal_tension, eQn_connection_typical_diagonal_tension = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_typical_diagonal, α.typical, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="unreinforced")
-
-	diagonal_eQn = [eQn_end_diagonal_compression_1; eQn_end_diagonal_compression_2; eQn_typical_diagonal_compression; eQn_end_diagonal_tension_1; eQn_end_diagonal_tension_2;eQn_typical_diagonal_tension]
-
-	connection_eQn = [eQn_connection_end_diagonal_compression_1; eQn_connection_end_diagonal_compression_2; eQn_connection_typical_diagonal_compression; eQn_connection_end_diagonal_tension_1; eQn_connection_end_diagonal_tension_2;eQn_connection_typical_diagonal_tension]
-
-	eQnV = minimum([diagonal_eQn; connection_eQn])	
-		
-	return eQnV
-		
-		
-end
-
-function calculate_MAX_joist_shear_strength(span_length, joist_ends, α, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L, design_code, bolt_diameter, Fnv, t_chord, Fu, t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1, t_end_diagonal_tension_2, t_shield_plate)
-
-
-	eQn_end_diagonal_compression_1, eQn_connection_end_diagonal_compression_1 = calculate_joist_load_diagonal_compression_limit_state(span_length, joist_ends[1], α.C1, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L.C1/2, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-	eQn_end_diagonal_compression_2, eQn_connection_end_diagonal_compression_2 = calculate_joist_load_diagonal_compression_limit_state(span_length, joist_ends[2], α.C2, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_2, Fy, E, L.C2/2, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-		x_top_chord_to_node_typical_diagonal = uconvert(u"sinch_us", node_spacing + joist_ends[2]) 
-	
-	eQn_typical_diagonal_compression, eQn_connection_typical_diagonal_compression = calculate_joist_load_diagonal_compression_limit_state(span_length, x_top_chord_to_node_typical_diagonal, α.typical, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, L.typical/2, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-	x_top_chord_to_node_first_tension_diagonal = 0.0u"sinch_us"
-	
-	eQn_end_diagonal_tension_1, eQn_connection_end_diagonal_tension_1 = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_first_tension_diagonal, α.T1, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_tension_1, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-	eQn_end_diagonal_tension_2, eQn_connection_end_diagonal_tension_2 = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_first_tension_diagonal, α.T2, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_tension_2, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-	eQn_typical_diagonal_tension, eQn_connection_typical_diagonal_tension = calculate_joist_load_diagonal_tension_limit_state(span_length, x_top_chord_to_node_typical_diagonal, α.typical, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_diagonal, Fy, E, design_code, bolt_diameter, Fnv, t_chord, Fu, t_shield_plate, node_connection="reinforced")
-
-	diagonal_eQn = [eQn_end_diagonal_compression_1; eQn_end_diagonal_compression_2; eQn_typical_diagonal_compression; eQn_end_diagonal_tension_1; eQn_end_diagonal_tension_2;eQn_typical_diagonal_tension]
-
-	connection_eQn = [eQn_connection_end_diagonal_compression_1; eQn_connection_end_diagonal_compression_2; eQn_connection_typical_diagonal_compression; eQn_connection_end_diagonal_tension_1; eQn_connection_end_diagonal_tension_2;eQn_connection_typical_diagonal_tension]
-
-	eQnV = minimum([diagonal_eQn; connection_eQn])	
-		
-	return eQnV
-		
-		
-end
-
-
-function joist_moment_strength(span_length, truss_depth, ycg_chord, eTn_chord, ePnℓ_chord)
-		
-	q=1.0u"lbf/sft_us"
-
-	M_unit = q * span_length^2 / 8
-
-	moment_arm = truss_depth - 2 * ycg_chord
-
-	Pu_chord = round(u"lbf", uconvert(u"lbf", M_unit / moment_arm), sigdigits = 3)
-
-	eQn_chord_compression = round(u"lbf/sft_us", ePnℓ_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQn_chord_tension = round(u"lbf/sft_us", eTn_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQnM_chord_limit_states = [eQn_chord_compression; eQn_chord_tension]
-
-	eQnM = minimum(eQnM_chord_limit_states)
-
-	return eQnM
-		
-end
-
-function joist_moment_strength(span_length, truss_depth, ycg_chord, eTn_chord, ePnℓ_chord)
-		
-	q=1.0u"lbf/sft_us"
-
-	M_unit = q * span_length^2 / 8
-
-	moment_arm = truss_depth - 2 * ycg_chord
-
-	Pu_chord = round(u"lbf", uconvert(u"lbf", M_unit / moment_arm), sigdigits = 3)
-
-	eQn_chord_compression = round(u"lbf/sft_us", ePnℓ_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQn_chord_tension = round(u"lbf/sft_us", eTn_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQnM_chord_limit_states = [eQn_chord_compression; eQn_chord_tension]
-
-	eQnM = minimum(eQnM_chord_limit_states)
-
-	return eQnM
-		
-end
-
-function joist_moment_strength(span_length, truss_depth, ycg_chord, eTn_chord, ePnℓ_chord)
-		
-	q=1.0u"lbf/sft_us"
-
-	M_unit = q * span_length^2 / 8
-
-	moment_arm = truss_depth - 2 * ycg_chord
-
-	Pu_chord = round(u"lbf", uconvert(u"lbf", M_unit / moment_arm), sigdigits = 3)
-
-	eQn_chord_compression = round(u"lbf/sft_us", ePnℓ_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQn_chord_tension = round(u"lbf/sft_us", eTn_chord/Pu_chord*u"lbf/sft_us", sigdigits=3)
-
-	eQnM_chord_limit_states = [eQn_chord_compression; eQn_chord_tension]
-
-	eQnM = minimum(eQnM_chord_limit_states)
-
-	return eQnM
-		
-end
-
-function calculate_joist_load_limit(span_length, node_spacing, Δx_bearing_seat_chord_holes, Δy_chord_to_hole, Δx_node_to_hole, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth, cross_section_segments_diagonal,	cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E,design_code,bolt_diameter,Fnv,t_chord,Fu,	t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1,	t_end_diagonal_tension_2,ycg_chord, eTn_chord, ePnℓ_chord, girder_flange_width, h_seat,num_top_chord_bolts_1, L_seat_weld, Fu_support,t_seat_weld, Fxx_weld,ν,	compression_field_width,num_top_chord_bolts_2, A_chord,p_self, p_DL, joist_spacing, t_shield_plate; JIT_configuration)
-	
-		
-	joist_ends = define_joist_ends(span_length, node_spacing)
-
-	Δx_chord_hole_from_joist_end_1 = define_first_chord_hole_location(joist_end_length=joist_ends[1])
-
-	Δx_chord_hole_from_joist_end_2 = define_first_chord_hole_location(joist_end_length=joist_ends[2])
-
-	Δx_seat_1 = calculate_bearing_seat_offset(joist_ends[1], Δx_chord_hole_from_joist_end_1, Δx_bearing_seat_chord_holes)
-
-	Δx_seat_2 = calculate_bearing_seat_offset(joist_ends[2], Δx_chord_hole_from_joist_end_2, Δx_bearing_seat_chord_holes)
-
-	L, α = calculate_joist_diagonal_geometry(joist_ends, Δx_chord_hole_from_joist_end_1, Δx_chord_hole_from_joist_end_2, Δx_seat_1, Δx_seat_2, node_spacing, Δy_chord_to_hole, Δx_node_to_hole, joist_spacing, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, Δx_bearing_seat_chord_holes, joist_depth)
-
-	if JIT_configuration == "MIN"
-
-		eQnV = calculate_MIN_joist_shear_strength(span_length, joist_ends, α, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L, design_code, bolt_diameter, Fnv, t_chord, Fu, t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1, t_end_diagonal_tension_2, t_shield_plate)
-
-	elseif JIT_configuration == "MAX"
-
-		eQnV = calculate_MAX_joist_shear_strength(span_length, joist_ends, α, cross_section_segments_diagonal, cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E, L, design_code, bolt_diameter, Fnv, t_chord, Fu, t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1, t_end_diagonal_tension_2, t_shield_plate)
-
-	end
-		
-
-	eQnM = joist_moment_strength(span_length, joist_depth, ycg_chord, eTn_chord, ePnℓ_chord)
-
-	eQnBS = joist_bearing_seat_strength(Δx_seat_1,  Δx_seat_far_bolt_hole, girder_flange_width, Δy_chord_seat_contact, h_seat, α, bolt_diameter, t_chord, Fu, Fnv, design_code, num_top_chord_bolts_1, t_end_tension_diagonal_1, L_seat_weld, Fu_support, t_seat_weld, Fxx_weld, E, ν, compression_field_width, Δx_seat_2, num_top_chord_bolts_2, t_end_tension_diagonal_2, span_length)
-
-	eQnΔ = joist_deflection_load_limit(A_chord, joist_depth, ycg_chord, span_length, E)
-
-	joist_load_limit_states = [eQnV; eQnM; eQnBS; eQnΔ]
-
-	eQn = minimum(joist_load_limit_states) - (p_self + p_DL) * joist_spacing
-
-	return eQn
-
-end
-
-function generate_span_chart_column(span_length_range, node_spacing, Δx_bearing_seat_chord_holes, Δy_chord_to_hole, Δx_node_to_hole, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth, cross_section_segments_diagonal,	cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E,design_code,bolt_diameter,Fnv,t_chord,Fu,	t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1,	t_end_diagonal_tension_2,ycg_chord, eTn_chord, ePnℓ_chord, girder_flange_width, h_seat,num_top_chord_bolts_1, L_seat_weld, Fu_support,t_seat_weld, Fxx_weld,ν,	compression_field_width,num_top_chord_bolts_2, A_chord, p_self, p_DL, joist_spacing, t_shield_plate; JIT_configuration)
-
-	eQn_chart = []
-		
-	for i = 1:length(span_length_range)
-
-		if i==1
-
-			eQn_chart = calculate_joist_load_limit(span_length_range[i], node_spacing, Δx_bearing_seat_chord_holes, Δy_chord_to_hole, Δx_node_to_hole, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth, cross_section_segments_diagonal,	cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E,design_code,bolt_diameter,Fnv,t_chord,Fu,	t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1,	t_end_diagonal_tension_2,ycg_chord, eTn_chord, ePnℓ_chord, girder_flange_width, h_seat,num_top_chord_bolts_1, L_seat_weld, Fu_support,t_seat_weld, Fxx_weld,ν,	compression_field_width,num_top_chord_bolts_2, A_chord, p_self, p_DL, joist_spacing, t_shield_plate, JIT_configuration=JIT_configuration)
-
-		else
-
-			eQn_chart_next = calculate_joist_load_limit(span_length_range[i], node_spacing, Δx_bearing_seat_chord_holes, Δy_chord_to_hole, Δx_node_to_hole, Δx_seat_far_bolt_hole, Δx_seat_near_bolt_hole, x_support_to_bottom_chord, Δy_chord_seat_contact, Δy_seat_top_bolt, joist_depth, cross_section_segments_diagonal,	cross_section_segment_angles_diagonal, n_diagonal, radius_diagonal, n_radius_diagonal, t_end_diagonal_compression_1, Fy, E,design_code,bolt_diameter,Fnv,t_chord,Fu,	t_end_diagonal_compression_2, t_diagonal, t_end_diagonal_tension_1,	t_end_diagonal_tension_2,ycg_chord, eTn_chord, ePnℓ_chord, girder_flange_width, h_seat,num_top_chord_bolts_1, L_seat_weld, Fu_support,t_seat_weld, Fxx_weld,ν,	compression_field_width,num_top_chord_bolts_2, A_chord,p_self, p_DL, joist_spacing, t_shield_plate, JIT_configuration=JIT_configuration)
-
-		eQn_chart = [eQn_chart; eQn_chart_next]
-
-		end
-			
-	end
-
-	return eQn_chart
-	
-end
 
 
 
