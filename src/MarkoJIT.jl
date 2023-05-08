@@ -30,7 +30,7 @@ using .Strength
     diagonal_sections::Vector{String}
     diagonal_bracing::Vector{String}
     bearing_seat_dimensions::MarkoJIT.Geometry.BearingSeatDimensions
-    chord_splice_dimensions::NamedTuple{(:t, :B, :H, :R), NTuple{4, Float64}} 
+    chord_splice_dimensions::NamedTuple{(:t, :B, :H, :R, :location), Tuple{Float64, Float64, Float64, Float64, Vector{Float64}}} 
     girder_dimensions::MarkoJIT.Geometry.Girder
     girder_material_properties::NamedTuple{(:fy, :fu), Tuple{Float64, Float64}}
     bearing_seat_weld_properties::NamedTuple{(:length, :Fxx, :t, :num_lines), Tuple{Float64, Float64, Float64, Int64}}
@@ -70,6 +70,7 @@ end
     joist_deflection::NamedTuple{(:DC, :max_location, :max_DC), Tuple{Float64, Int64, Float64}}
 
     all::Vector{Float64}
+    labels::Vector{String}
     max::Float64
     controlling::String
     failure_location::Int64
@@ -85,7 +86,43 @@ end
     deflection::Float64
     demand::ComponentDemands
     demand_to_capacity::DemandToCapacity
+    limit_state_loads::Vector{Tuple{String, Float64}}
     design_load::Float64
+
+end
+
+function calculate_chord_splice_DC(element_type, model, chord_splice_dimensions, eRn_chord_splice, chord_demand)
+
+    chord_elements = findall(element->element==element_type, model.inputs.element.cross_section)
+
+    chord_element_index = Vector{Int}(undef, 0)
+    for i in eachindex(chord_splice_dimensions.location)
+        chord_element_index_all = findall(location->location<chord_splice_dimensions.location[i], cumsum(model.properties.L[chord_elements]))
+
+        if !isempty(chord_element_index_all)
+            chord_element_index = push!(chord_element_index, chord_element_index_all[end]+1)  #need +1 here to land in the correct chord element 
+        end
+    end
+
+    if isempty(chord_element_index)
+        chord_splice_DC = calculate_demand_to_capacity([0.0], eRn_chord_splice) #no splice 
+    else
+        chord_splice_DC = calculate_demand_to_capacity(abs.(chord_demand[chord_element_index])./1000, eRn_chord_splice)
+    end
+
+    return chord_splice_DC
+
+end
+
+function calculate_demand_to_capacity(demand, capacity)
+
+    DC = demand ./ capacity
+    max_DC_location = argmax(DC)
+    max_DC = maximum(DC)
+
+    DC_details = (DC=DC, max_location=max_DC_location, max_DC = max_DC)
+
+    return DC_details
 
 end
 
@@ -131,7 +168,11 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     #compression 
 
     #diagonal cross-section local buckling properties 
-    Pcrℓ_diagonal, diagonal_section_local_buckling = Properties.calculate_diagonal_local_buckling_load(diagonal_section_geometry, diagonal_dimensions, joist_material_properties)
+    # Pcrℓ_diagonal, diagonal_section_local_buckling = Properties.calculate_diagonal_local_buckling_load(diagonal_section_geometry, diagonal_dimensions, joist_material_properties)
+
+    Pcrℓ_diagonal = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/diagonal_Pcrl")
+    diagonal_section_local_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/diagonal_section_local_buckling")
+
 
     #diagonal global buckling 
     Pcre_diagonal, diagonal_global_buckling = Strength.calculate_diagonal_global_buckling(model, diagonal_sections, diagonal_bracing, diagonal_dimensions, diagonal_section_geometry, joist_material_properties)
@@ -187,20 +228,6 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
 
     end
 
-
-    function calculate_demand_to_capacity(demand, capacity)
-
-        DC = demand ./ capacity
-        max_DC_location = argmax(DC)
-        max_DC = maximum(DC)
-
-        DC_details = (DC=DC, max_location=max_DC_location, max_DC = max_DC)
-
-        return DC_details
-
-    end
-
-
     diagonal_DC = calculate_demand_to_capacity(abs.(diagonal_demands)/1000, eRn_diagonals)
 
     eRn_top_chord_connections = [top_chord_connection_strengths[i].eRn for i in eachindex(top_chord_connection_strengths)]
@@ -221,8 +248,20 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     bottom_chord_tension_DC = calculate_demand_to_capacity(abs.(bottom_chord_tension_demand)./1000, fill(eRn_bottom_chord, length(bottom_chord_tension_demand)))
 
     eRn_chord_splice = chord_splice_strength.eRn
-    bottom_chord_splice_DC = calculate_demand_to_capacity(abs.(bottom_chord_tension_demand)./1000, fill(eRn_chord_splice, length(bottom_chord_tension_demand)))
-    top_chord_splice_DC = calculate_demand_to_capacity(abs.(top_chord_compression_demand)./1000, fill(eRn_chord_splice, length(top_chord_compression_demand)))
+
+    # top_chord_elements = findall(element->element=="top chord", model.inputs.element.cross_section)
+    # chord_element_index = findall(location->location<chord_splice_dimensions.location, cumsum(model.properties.L[top_chord_elements]))
+    
+    # if isempty(chord_element_index)
+    #     top_chord_splice_DC = calculate_demand_to_capacity(0.0, eRn_chord_splice)  #no splice 
+    # else
+    #     top_chord_splice_DC = calculate_demand_to_capacity(abs.(top_chord_compression_demand[chord_element_index[end]])./1000, eRn_chord_splice)
+    # end
+
+    bottom_chord_splice_DC = calculate_chord_splice_DC("bottom chord", model, chord_splice_dimensions, eRn_chord_splice, bottom_chord_tension_demand)
+    top_chord_splice_DC = calculate_chord_splice_DC("top chord", model, chord_splice_dimensions, eRn_chord_splice, top_chord_compression_demand)
+
+    
 
     eRn_bearing_seat_weld = bearing_seat_weld_strength.eRn
     bearing_seat_weld_DC_1 = calculate_demand_to_capacity(abs.(model.solution.reactions[1][1])./1000, eRn_bearing_seat_weld)
@@ -293,14 +332,15 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
         
     else
 
-        failure_location = NaN
+        failure_location = 0
 
     end
 
+    limit_state_loads= [(DC_labels[i], 1 ./DC_all[i]) for i in eachindex(DC_labels)]
 
-    demand_to_capacity = DemandToCapacity(diagonal_DC, top_chord_connection_DC, bottom_chord_connection_DC, top_chord_compression_DC, bottom_chord_tension_DC, top_chord_splice_DC, bottom_chord_splice_DC, bearing_seat_weld_DC_1, bearing_seat_weld_DC_2, bearing_seat_compression_field_DC_1, bearing_seat_compression_field_DC_2, bearing_seat_chord_connection_DC_1, bearing_seat_chord_connection_DC_2, joist_deflection_DC, DC_all, max_DC, controlling_DC, failure_location)
+    demand_to_capacity = DemandToCapacity(diagonal_DC, top_chord_connection_DC, bottom_chord_connection_DC, top_chord_compression_DC, bottom_chord_tension_DC, top_chord_splice_DC, bottom_chord_splice_DC, bearing_seat_weld_DC_1, bearing_seat_weld_DC_2, bearing_seat_compression_field_DC_1, bearing_seat_compression_field_DC_2, bearing_seat_chord_connection_DC_1, bearing_seat_chord_connection_DC_2, joist_deflection_DC, DC_all, DC_labels, max_DC, controlling_DC, failure_location)
 
-    joist_span = JoistSpan(inputs, properties, model, strength, Δ_joist, demand, demand_to_capacity, joist_strength)
+    joist_span = JoistSpan(inputs, properties, model, strength, Δ_joist, demand, demand_to_capacity, limit_state_loads, joist_strength)
 
     return joist_span
 

@@ -1,72 +1,85 @@
-using MarkoJIT, CSV, DataFrames, InstantFrame, CrossSection, AISIS100, CUFSM, Unitful, InstantFrame
+using MarkoJIT, CSV, DataFrames, InstantFrame, GLMakie
 
 
-######inputs
+# ######inputs
 
-design_code = "AISI S100-16 ASD"
+# design_code = "AISI S100-16 ASD"
 
-#joist dimensions 
-joist_dimensions = MarkoJIT.Geometry.JoistDimensions(span_length = 50.0*12, depth = 35.44, node_spacing = 48.0, x_support_to_bottom_chord = 24.0)
+# #joist dimensions 
+# joist_dimensions = MarkoJIT.Geometry.JoistDimensions(span_length = 50.0*12, depth = 35.44, node_spacing = 48.0, x_support_to_bottom_chord = 24.0)
 
-#chord cross section
-file = "/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_centerline_cross_section_coordinates.csv"
-chord_cross_section = CSV.read(file, DataFrame)
+# #chord cross section
+# file = "/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_centerline_cross_section_coordinates.csv"
+# chord_cross_section = CSV.read(file, DataFrame)
 
-chord_dimensions = MarkoJIT.Geometry.ChordDimensions(t=0.061, centerline_cross_section_coordinates = [(chord_cross_section.X[i], chord_cross_section.Y[i]) for i in eachindex(chord_cross_section.X)], tab_hole_center_location = (Δx=56.0/25.4/2, Δy=2.48, Δz=1.73/2 + 0.061/2), seat_contact_depth = 2.31, flange_punchout_width=1.734)
+# chord_dimensions = MarkoJIT.Geometry.ChordDimensions(t=0.061, centerline_cross_section_coordinates = [(chord_cross_section.X[i], chord_cross_section.Y[i]) for i in eachindex(chord_cross_section.X)], tab_hole_center_location = (Δx=56.0/25.4/2, Δy=2.48, Δz=1.73/2 + 0.061/2), seat_contact_depth = 2.31, flange_punchout_width=1.734)
 
-#diagonal cross sections
-diagonal_dimensions = MarkoJIT.Geometry.DiagonalDimensions(name=["16 gauge diagonal", "14 gauge diagonal", "12 gauge diagonal"], t=[0.061, 0.078, 0.105], B=fill((1 + 11/64), 3), H = fill((1 + 23/32), 3), R=fill((1/8 + 5/64), 3))
+# #diagonal cross sections
+# diagonal_dimensions = MarkoJIT.Geometry.DiagonalDimensions(name=["16 gauge diagonal", "14 gauge diagonal", "12 gauge diagonal"], t=[0.061, 0.078, 0.105], B=fill((1 + 11/64), 3), H = fill((1 + 23/32), 3), R=fill((1/8 + 5/64), 3))
 
-#bolt properties and dimensions 
-bolt_properties = (name = "ASTM A307", diameter=0.375, hole_diameter=0.394, Fnv=24.0)
+# #bolt properties and dimensions 
+# bolt_properties = (name = "ASTM A307", diameter=0.375, hole_diameter=0.394, Fnv=24.0)
 
-#shield plate dimensions
-shield_plate_dimensions = (t=0.061, slotted_hole_edge_distance=0.59)
+# #shield plate dimensions
+# shield_plate_dimensions = (t=0.061, slotted_hole_edge_distance=0.59)
 
-#assign diagonal sections
-num_diagonals = MarkoJIT.Geometry.calculate_number_of_joist_diagonals(joist_dimensions.span_length, joist_dimensions.node_spacing)
+# #assign diagonal sections
+# num_diagonals = MarkoJIT.Geometry.calculate_number_of_joist_diagonals(joist_dimensions.span_length, joist_dimensions.node_spacing)
 
-diagonal_sections = [["14 gauge diagonal", "14 gauge diagonal"]; fill("14 gauge diagonal", num_diagonals - 4); ["14 gauge diagonal", "14 gauge diagonal"]]
+# diagonal_sections = [["14 gauge diagonal", "14 gauge diagonal"]; fill("14 gauge diagonal", num_diagonals - 4); ["14 gauge diagonal", "14 gauge diagonal"]]
 
-#define diagonal bracing
-diagonal_bracing = [["braced", "braced"]; fill("braced", num_diagonals - 4); ["braced", "braced"]]
+# #define diagonal bracing
+# diagonal_bracing = [["braced", "braced"]; fill("braced", num_diagonals - 4); ["braced", "braced"]]
 
-#bearing seat dimensions
-bearing_seat_dimensions = MarkoJIT.Geometry.BearingSeatDimensions(t=0.078, flange_hole_center_locations = (Δx = [20.0/25.4, 45.0/25.4, 70.0/25.4], Δy = [-0.078/2, -0.078/2, -0.078/2], Δz = [0.0, 0.0, 0.0]), web_hole_center_locations = (Δx = [54.5/25.4, 104.5/25.4], Δy = [-28.0/25.4, -28.0/25.4], Δz = [24.7/25.4 - 0.078/2, 24.7/25.4 - 0.078/2]), height =99.0/25.4, num_webs=2)
+# #bearing seat dimensions
+# bearing_seat_dimensions = MarkoJIT.Geometry.BearingSeatDimensions(t=0.078, flange_hole_center_locations = (Δx = [20.0/25.4, 45.0/25.4, 70.0/25.4], Δy = [-0.078/2, -0.078/2, -0.078/2], Δz = [0.0, 0.0, 0.0]), web_hole_center_locations = (Δx = [54.5/25.4, 104.5/25.4], Δy = [-28.0/25.4, -28.0/25.4], Δz = [24.7/25.4 - 0.078/2, 24.7/25.4 - 0.078/2]), height =99.0/25.4, num_webs=2)
 
-#chord splice dimensions 
-chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4)
+# #chord splice dimensions 
+# chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4, location=36.0*12)
 
-#girder dimensions 
-girder_dimensions = MarkoJIT.Geometry.Girder(top_flange_width = 8.0, top_flange_thickness = 1.0)
+# #girder dimensions 
+# girder_dimensions = MarkoJIT.Geometry.Girder(top_flange_width = 8.0, top_flange_thickness = 1.0)
 
-#girder material properties 
-girder_material_properties = (fy=36.0, fu=52.0)
+# #girder material properties 
+# girder_material_properties = (fy=36.0, fu=52.0)
 
-#bearing seat weld info
-bearing_seat_weld_properties = (length=2.5, Fxx=60.0, t=1/8, num_lines=2)
+# #bearing seat weld info
+# bearing_seat_weld_properties = (length=2.5, Fxx=60.0, t=1/8, num_lines=2)
 
-#joist material properties 
-joist_material_properties = MarkoJIT.Properties.JoistMaterial(fy=37.0, fu=52.0, E=29500.0, ν=0.30)
+# #joist material properties 
+# joist_material_properties = MarkoJIT.Properties.JoistMaterial(fy=37.0, fu=52.0, E=29500.0, ν=0.30)
 
-#define top chord connection types 
-top_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"]
+# #define top chord connection types 
+# top_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"]
 
-#define bottom chord connection types 
-bottom_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"]
+# #define bottom chord connection types 
+# bottom_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"]
 
-# using Serialization 
-# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_local_buckling_properties", joist_span.strength.chord_compressive_strength.local_buckling_properties)
-# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrl", joist_span.strength.chord_compressive_strength.Pcrℓ)
-# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_distortional_buckling_properties", joist_span.strength.chord_compressive_strength.distortional_buckling_properties)
-# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrd", joist_span.strength.chord_compressive_strength.Pcrd)
+function define_chord_splice_dimensions(span_length)
 
+    if span_length <= 36.0 * 12  #for shorter spans, so splice 
+        chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4, location=[0.0])
+    elseif (span_length > 36.0 * 12) & (span_length <= 50.0 * 12)  #for shorter spans, so splice 
+        chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4, location=[24.0 * 12])
+    elseif (span_length > 50.0 * 12) & (span_length <= 72.0 * 12)  #for shorter spans, so splice 
+        chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4, location=[36.0 * 12])
+    elseif (span_length > 72.0 * 12) & (span_length <= 100.0 * 12)
+        chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4, location=[36.0 * 12, 60.0*12])
+    end
 
-span_lengths = range(40.0*12, 70*12, 16)
+    return chord_splice_dimensions
+
+end
+
+######create span chart
+
+span_lengths = range(30.0*12, 100*12, step=12.0)
 
 joist_spans = Vector{MarkoJIT.JoistSpan}(undef, length(span_lengths))
 
 for i in eachindex(joist_spans)
+
+    print(i)
 
     design_code = "AISI S100-16 ASD"
 
@@ -100,7 +113,8 @@ for i in eachindex(joist_spans)
     bearing_seat_dimensions = MarkoJIT.Geometry.BearingSeatDimensions(t=0.078, flange_hole_center_locations = (Δx = [20.0/25.4, 45.0/25.4, 70.0/25.4], Δy = [-0.078/2, -0.078/2, -0.078/2], Δz = [0.0, 0.0, 0.0]), web_hole_center_locations = (Δx = [54.5/25.4, 104.5/25.4], Δy = [-28.0/25.4, -28.0/25.4], Δz = [24.7/25.4 - 0.078/2, 24.7/25.4 - 0.078/2]), height =99.0/25.4, num_webs=2)
 
     #chord splice dimensions 
-    chord_splice_dimensions = (t=0.105, B=24.6/25.4, H = 43.6/25.4, R=(3.0+2.7)/25.4)
+
+    chord_splice_dimensions = define_chord_splice_dimensions(span_lengths[i])
 
     #girder dimensions 
     girder_dimensions = MarkoJIT.Geometry.Girder(top_flange_width = 8.0, top_flange_thickness = 1.0)
@@ -126,19 +140,31 @@ end
 
 
 span_table = DataFrame()
-
 span_table.A = span_lengths/12.0
-
-span_table.B = [joist_spans[i].design_load for i in eachindex(span_lengths)]
-
+span_table.B = [round(joist_spans[i].design_load, digits=1) for i in eachindex(span_lengths)]
 span_table.C = [joist_spans[i].demand_to_capacity.controlling for i in eachindex(span_lengths)]
-
 span_table.D = [joist_spans[i].demand_to_capacity.failure_location for i in eachindex(span_lengths)]
-
 rename!(span_table, :A => :span_length);
 rename!(span_table, :B => :JIT_36_MAX);
 rename!(span_table, :C => :limit_state);
 rename!(span_table, :D => :failure_location);
+
+
+top_chord_elements = findall(element->element=="top chord", joist_spans[6].model.inputs.element.cross_section)
+
+splice_location = 36*12.0
+chord_element_index = findall(location->location<splice_location, cumsum(joist_spans[6].model.properties.L[top_chord_elements]))[end]
+
+cumsum(joist_spans[6].model.properties.L[top_chord_elements])
+
+top_chord_node_range = joist_spans[6].model.inputs.element.nodes[top_chord_elements[1]][1]:joist_spans[6].model.inputs.element.nodes[top_chord_elements[end]][2]
+
+
+# using Serialization 
+# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_local_buckling_properties", joist_span.strength.chord_compressive_strength.local_buckling_properties)
+# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrl", joist_span.strength.chord_compressive_strength.Pcrℓ)
+# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_distortional_buckling_properties", joist_span.strength.chord_compressive_strength.distortional_buckling_properties)
+# serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrd", joist_span.strength.chord_compressive_strength.Pcrd)
 
 
 

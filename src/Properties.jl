@@ -1,6 +1,6 @@
 module Properties
 
-using CUFSM, CrossSection, Parameters
+using CUFSM, CrossSection, Parameters, Serialization
 
 
 @with_kw struct JoistMaterial
@@ -63,6 +63,9 @@ function calculate_diagonal_local_buckling_load(diagonal_section_geometry, diago
         Pcrℓ = push!(Pcrℓ, minimum([diagonal_section_local_buckling[i].curve[j,1][2] for j=1:length(lengths)]))
 
     end
+
+    # serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/diagonal_Pcrl", Pcrℓ)
+    # serialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/diagonal_section_local_buckling", diagonal_section_local_buckling)
 
     return Pcrℓ, diagonal_section_local_buckling
 
