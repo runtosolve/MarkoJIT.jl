@@ -91,18 +91,26 @@ end
 
 end
 
-function calculate_chord_splice_DC(element_type, model, chord_splice_dimensions, eRn_chord_splice, chord_demand)
+function calculate_chord_splice_DC(element_type, model, chord_splice_dimensions, eRn_chord_splice, chord_demand, joist)
 
     chord_elements = findall(element->element==element_type, model.inputs.element.cross_section)
 
     chord_element_index = Vector{Int}(undef, 0)
     for i in eachindex(chord_splice_dimensions.location)
-        chord_element_index_all = findall(location->location<chord_splice_dimensions.location[i], cumsum(model.properties.L[chord_elements]))
+
+        if element_type == "top chord"
+            chord_element_index_all = findall(location->location<chord_splice_dimensions.location[i], cumsum(model.properties.L[chord_elements]))
+        elseif element_type == "bottom chord"
+            chord_element_index_all = findall(location->location<chord_splice_dimensions.location[i], cumsum(model.properties.L[chord_elements]) .+ joist.x_support_to_bottom_chord)
+            # print(chord_element_index_all[end]+1)
+        end
 
         if !isempty(chord_element_index_all)
             chord_element_index = push!(chord_element_index, chord_element_index_all[end]+1)  #need +1 here to land in the correct chord element 
         end
     end
+
+
 
     if isempty(chord_element_index)
         chord_splice_DC = calculate_demand_to_capacity([0.0], eRn_chord_splice) #no splice 
@@ -141,7 +149,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     #diagonal section properties
     diagonal_section_geometry = [Geometry.define_diagonal_cross_section_geometry(diagonal_dimensions.B[i], diagonal_dimensions.H[i], diagonal_dimensions.R[i], diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
 
-    diagonal_section_properties = [CrossSection.Properties.open_thin_walled(diagonal_section_geometry[i].center, diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
+    diagonal_section_properties = [CrossSection.Properties.open_thin_walled(diagonal_section_geometry[i].center, fill(diagonal_dimensions.t[i], length(diagonal_section_geometry[i].center)-1)) for i in eachindex(diagonal_dimensions.t)]
 
 
     properties = Properties.Section(chord=chord_section_properties, diagonals=diagonal_section_properties)
@@ -258,10 +266,9 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     #     top_chord_splice_DC = calculate_demand_to_capacity(abs.(top_chord_compression_demand[chord_element_index[end]])./1000, eRn_chord_splice)
     # end
 
-    bottom_chord_splice_DC = calculate_chord_splice_DC("bottom chord", model, chord_splice_dimensions, eRn_chord_splice, bottom_chord_tension_demand)
-    top_chord_splice_DC = calculate_chord_splice_DC("top chord", model, chord_splice_dimensions, eRn_chord_splice, top_chord_compression_demand)
+    bottom_chord_splice_DC = calculate_chord_splice_DC("bottom chord", model, chord_splice_dimensions, eRn_chord_splice, bottom_chord_tension_demand, joist_dimensions)
+    top_chord_splice_DC = calculate_chord_splice_DC("top chord", model, chord_splice_dimensions, eRn_chord_splice, top_chord_compression_demand, joist_dimensions)
 
-    
 
     eRn_bearing_seat_weld = bearing_seat_weld_strength.eRn
     bearing_seat_weld_DC_1 = calculate_demand_to_capacity(abs.(model.solution.reactions[1][1])./1000, eRn_bearing_seat_weld)

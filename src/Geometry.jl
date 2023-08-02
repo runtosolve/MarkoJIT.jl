@@ -84,19 +84,19 @@ function define_joist_ends(span_length, node_spacing)
 
 	if num_node_difference == 0.50
 
-		joist_ends = (4.0*12, 2.0*12)
+		joist_ends = (4.0*12, (4.0+2.0)*12)
 
 	elseif num_node_difference == 0.0
 
-		joist_ends = (2.0*12, 2.0*12)
+		joist_ends = ((4.0+2.0)*12, (4.0+2.0)*12)
 
 	elseif num_node_difference == 0.75
 
-		joist_ends = (1.0*12, 2.0*12)
+		joist_ends = ((4.0+1.0)*12, (4.0+2.0)*12)
 
 	elseif num_node_difference == 0.25
 		
-		joist_ends = (3.0*12, 2.0*12)
+		joist_ends = (4.0*12, (4.0 + 1.0)*12)
 
 	end
 
@@ -366,7 +366,7 @@ end
 function define_top_of_girder_coordinates(bearing_seat, girder, chord, joist)
 
     Δy = -chord.seat_contact_depth - bearing_seat.height
-    girder_flange_coordinates = [(girder.top_flange_width/2, Δy), (joist.span_length - girder.top_flange_width/2, Δy)]
+    girder_flange_coordinates = [(girder.top_flange_width/2/2, Δy), (joist.span_length - girder.top_flange_width/2/2, Δy)]
 
     return girder_flange_coordinates
 
