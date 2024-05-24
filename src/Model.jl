@@ -4,7 +4,7 @@ using InstantFrame
 
 using ..Properties, ..Geometry 
 
-function run_joist_analysis_model(coordinates, element_connectivity, elements_by_component, diagonal_dimensions, diagonal_section_properties, chord_section_properties, diagonal_section_assignments)
+function run_joist_analysis_model(coordinates, element_connectivity, elements_by_component, element_labels, diagonal_dimensions, diagonal_section_properties, chord_section_properties, diagonal_section_assignments)
 
     #####define nodes 
     joist_nodes = define_joist_model_nodes(coordinates)
@@ -27,9 +27,12 @@ function run_joist_analysis_model(coordinates, element_connectivity, elements_by
     #element_connections = [fill(("rigid", "rigid"), length(elements_by_section.diagonals)); fill(("rigid","rigid"), size(element_connectivity, 1) - length(elements_by_section.diagonals))]
 
 
-    element = InstantFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=fill("frame", size(element_connectivity, 1)))
+    # element = InstantFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=fill("frame", size(element_connectivity, 1)))
 
-    support = InstantFrame.Support(nodes=[node.numbers[end-1], node.numbers[end]], stiffness=(uX=[Inf,Inf], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
+    element = InstantFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=element_labels)
+
+
+    support = InstantFrame.Support(nodes=[node.numbers[end-1], node.numbers[end]], stiffness=(uX=[Inf,0.0], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
 
     # support = InstantFrame.Support(nodes=[54, 67], stiffness=(uX=[Inf,Inf], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
 
@@ -38,8 +41,8 @@ function run_joist_analysis_model(coordinates, element_connectivity, elements_by
 
     point_load = InstantFrame.PointLoad(nothing)
 
-    analysis_type = "first order"
-    model = InstantFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, analysis_type)
+    # analysis_type = "first order"
+    model = InstantFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, analysis_type="first order")
 
     return model
 
@@ -47,10 +50,13 @@ end
 
 function define_joist_model_coordinates(joist, chord_section_properties, bearing_seat, girder, chord)
 
-    #define model coordinates 
+    #define model coordinates
     
+    # #determine joist end node spacing
+    # joist_ends = define_joist_ends(joist.span_length, joist.node_spacing)
+
     #joist diagonals 
-    diagonal_coordinates = Geometry.calculate_joist_diagonal_coordinates(joist.span_length, joist.depth, joist.x_support_to_bottom_chord, joist.node_spacing, bearing_seat, chord)
+    diagonal_coordinates = Geometry.calculate_joist_diagonal_coordinates(joist.span_length, joist.depth, joist.bottom_chord_tail_length, joist.node_spacing, bearing_seat, chord)
 
     #top chord
     top_chord_coordinates = Geometry.define_top_chord_coordinates(chord_section_properties, diagonal_coordinates, joist)
@@ -156,10 +162,12 @@ end
     
     
         elements_by_component = (diagonals = diagonal_elements, top_chord=top_chord_elements, bottom_chord = bottom_chord_elements, top_of_girder=top_of_girder_elements, rigid_elements = rigid_elements)
-    
+
+        element_labels = [fill("diagonals", length(diagonal_elements)); fill("top chord", length(top_chord_elements)); fill("bottom chord", length(bottom_chord_elements)); fill("top of girder", length(top_of_girder_elements)); fill("rigid connections", length(rigid_elements))]
+
         element_connectivity = [diagonal_elements; top_chord_elements; bottom_chord_elements; top_of_girder_elements; rigid_elements]
     
-        return element_connectivity, elements_by_component
+        return element_connectivity, elements_by_component, element_labels
     
     end
 

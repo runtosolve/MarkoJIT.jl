@@ -50,6 +50,7 @@ function calculate_diagonal_local_buckling_load(diagonal_section_geometry, diago
     constraints = []
     springs = []
     lengths = range(2.0, 4.0, 5)  #hard coded
+    neigs = 1
 
     diagonal_section_local_buckling = Vector{CUFSM.Model}(undef, 0)
     Pcrℓ = Vector{Float64}(undef, 0)
@@ -58,7 +59,7 @@ function calculate_diagonal_local_buckling_load(diagonal_section_geometry, diago
 
         x_center = [diagonal_section_geometry[i].center[j][1] for j in eachindex(diagonal_section_geometry[i].center)]
         y_center = [diagonal_section_geometry[i].center[j][2] for j in eachindex(diagonal_section_geometry[i].center)]
-        diagonal_section_local_buckling = push!(diagonal_section_local_buckling, CUFSM.Tools.open_section_analysis(x_center, y_center, diagonal_dimensions.t[i], lengths, joist_material_properties.E, joist_material_properties.ν, P, Mxx, Mzz, M11, M22, constraints, springs))
+        diagonal_section_local_buckling = push!(diagonal_section_local_buckling, CUFSM.Tools.open_section_analysis(x_center, y_center, diagonal_dimensions.t[i], lengths, joist_material_properties.E, joist_material_properties.ν, P, Mxx, Mzz, M11, M22, constraints, springs, neigs))
 
         Pcrℓ = push!(Pcrℓ, minimum([diagonal_section_local_buckling[i].curve[j,1][2] for j=1:length(lengths)]))
 
@@ -84,10 +85,11 @@ function calculate_diagonal_global_buckling_load(diagonal_section_geometry, t, E
     constraints = []
     springs = []
     lengths = [L]
+    neigs = 1
 
     x_center = [diagonal_section_geometry.center[j][1] for j in eachindex(diagonal_section_geometry.center)]
     y_center = [diagonal_section_geometry.center[j][2] for j in eachindex(diagonal_section_geometry.center)]
-    diagonal_global_buckling = CUFSM.Tools.open_section_analysis(x_center, y_center, t, lengths, E, ν, P, Mxx, Mzz, M11, M22, constraints, springs)
+    diagonal_global_buckling = CUFSM.Tools.open_section_analysis(x_center, y_center, t, lengths, E, ν, P, Mxx, Mzz, M11, M22, constraints, springs, neigs)
 
     Pcre = diagonal_global_buckling.curve[1,1][2]
 
@@ -107,6 +109,7 @@ function calculate_chord_cross_section_buckling_load(chord_dimensions, joist_mat
     M22 = 0.0
     constraints = []
     springs = []
+    neigs = 1
     # lengths = collect(0.25*3.0:3.0/20:1.25*3.0)
 
     x = [chord_dimensions. centerline_cross_section_coordinates[j][1] for j in eachindex(chord_dimensions. centerline_cross_section_coordinates)]
@@ -115,7 +118,7 @@ function calculate_chord_cross_section_buckling_load(chord_dimensions, joist_mat
     y = -y  #flip so that the cross section looks like top chord
     y = y .- chord_dimensions.t/2 
 
-    chord_buckling = CUFSM.Tools.open_section_analysis(x, y, chord_dimensions.t, lengths, joist_material_properties.E, joist_material_properties.ν, P, Mxx, Mzz, M11, M22, constraints, springs)
+    chord_buckling = CUFSM.Tools.open_section_analysis(x, y, chord_dimensions.t, lengths, joist_material_properties.E, joist_material_properties.ν, P, Mxx, Mzz, M11, M22, constraints, springs, neigs)
 
     Pcr_chord = minimum([chord_buckling.curve[i][2] for i in eachindex(chord_buckling.curve)])
 
