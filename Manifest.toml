@@ -1327,7 +1327,7 @@ uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
 version = "1.11.0"
 
 [[deps.MarkoJIT]]
-deps = ["AISIS100", "CSV", "CUFSM", "CairoMakie", "CrossSectionGeometry", "DataFrames", "LinearAlgebra", "LinesCurvesNodes", "Parameters", "SectionProperties", "Serialization", "Statistics", "Unitful"]
+deps = ["AISIS100", "CSV", "CUFSM", "CairoMakie", "CrossSectionGeometry", "DataFrames", "InstantFrame", "LinearAlgebra", "LinesCurvesNodes", "Parameters", "SectionProperties", "Serialization", "Statistics", "Unitful"]
 path = "."
 uuid = "a0750c5e-ed94-4724-bdb6-51a58ed81540"
 version = "0.1.0"
