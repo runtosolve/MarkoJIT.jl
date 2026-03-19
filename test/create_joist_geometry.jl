@@ -61,14 +61,14 @@ maximum(y)
 maximum(x)
 1.0+23/32
 
-function calculate_web_diagonal_compressive_strength(ΔL, Θ, n, radius, n_radius, t, Fy, E, L_unbraced, design_code)
+# function calculate_web_diagonal_compressive_strength(ΔL, Θ, n, radius, n_radius, t, Fy, E, L_unbraced, design_code)
 
-function calculate_web_diagonal_compressive_strength(A, fy, L_u, )
+# function calculate_web_diagonal_compressive_strength(A, fy, L_u, )
 
 
-	geometry, sect_props = CrossSection.Properties.open_thin_walled(L, θ, r, n, n_r, t, centerline = "to right")
+# 	geometry, sect_props = CrossSection.Properties.open_thin_walled(L, θ, r, n, n_r, t, centerline = "to right")
 
-	A_diagonal = round(u"inch^2", web_diagonal_section_properties.A*1.0*u"inch^2", sigdigits=3)
+# 	A_diagonal = round(u"inch^2", web_diagonal_section_properties.A*1.0*u"inch^2", sigdigits=3)
 		
 # 	Py_diagonal = round(u"lbf", A_diagonal * Fy, sigdigits=4)
 		

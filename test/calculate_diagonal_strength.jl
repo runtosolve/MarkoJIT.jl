@@ -158,6 +158,8 @@ struct BearingSeat
     fcrℓ
     Pnℓ
 
+end
+
 
 struct Joist 
 
@@ -174,4 +176,4 @@ struct Joist
     bearing_seat
     connections 
 
-
+end
