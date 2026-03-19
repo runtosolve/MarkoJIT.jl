@@ -1,6 +1,6 @@
 module Joist
 
-using Parameters, InstantFrame, CrossSection, Serialization 
+using Parameters, InstantFrame, SectionProperties, Serialization 
 using ..Properties, ..Geometry, ..Strength, ..Model, ..MarkoJIT
 
 @with_kw struct Inputs
@@ -140,7 +140,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     #diagonal section properties
     diagonal_section_geometry = [MarkoJIT.Geometry.define_diagonal_cross_section_geometry(diagonal_dimensions.B[i], diagonal_dimensions.H[i], diagonal_dimensions.R[i], diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
 
-    diagonal_section_properties = [CrossSection.Properties.open_thin_walled(diagonal_section_geometry[i].center, fill(diagonal_dimensions.t[i], length(diagonal_section_geometry[i].center)-1)) for i in eachindex(diagonal_dimensions.t)]
+    diagonal_section_properties = [SectionProperties.open_thin_walled(diagonal_section_geometry[i].center, fill(diagonal_dimensions.t[i], length(diagonal_section_geometry[i].center)-1)) for i in eachindex(diagonal_dimensions.t)]
 
 
     properties = MarkoJIT.Properties.Section(chord=chord_section_properties, diagonals=diagonal_section_properties)

@@ -1,6 +1,6 @@
 module Geometry
 
-using DataFrames, LinearAlgebra, Statistics, Parameters, CrossSection
+using DataFrames, LinearAlgebra, Statistics, Parameters, CrossSectionGeometry
 
 @with_kw struct ShieldPlateDimensions
 
@@ -392,7 +392,7 @@ function define_diagonal_cross_section_geometry(B, H, R, t)
     r = [R, R]
     n = [5, 5, 5]
     n_r = [5, 5]
-    section_geometry = CrossSection.Geometry.create_thin_walled_cross_section_geometry(L, θ, n, r, n_r, t, centerline = "to right", offset = (0.0, 0.0))
+    section_geometry = CrossSectionGeometry.create_thin_walled_cross_section_geometry(L, θ, n, r, n_r, t, centerline = "to right", offset = (0.0, 0.0))
 
     return section_geometry
 

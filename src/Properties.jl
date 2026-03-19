@@ -1,6 +1,6 @@
 module Properties
 
-using CUFSM, CrossSection, Parameters, Serialization
+using CUFSM, Parameters, Serialization
 
 
 @with_kw struct JoistMaterial
