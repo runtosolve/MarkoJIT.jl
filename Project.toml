@@ -10,7 +10,6 @@ CUFSM = "82b4978f-06ae-48e0-88e8-a26b4f7a0fa1"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CrossSectionGeometry = "e5713cf4-1a83-4860-95bf-b82253e75fb4"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-InstantFrame = "d4c411e5-b967-4c36-b61c-e426871b3c50"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinesCurvesNodes = "74a74c3a-221d-4cd1-a4eb-c3c8149e7592"
 Parameters = "d96e819e-fc66-5662-9728-84c9c7592b0a"
@@ -18,6 +17,3 @@ SectionProperties = "03320fb2-42b0-43fd-9b66-b95dbaa39193"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
-
-[compat]
-
