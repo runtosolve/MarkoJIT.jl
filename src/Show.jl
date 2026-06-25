@@ -1,15 +1,15 @@
 module Show
 
-using InstantFrame, CairoMakie
+using InstaFrame, CairoMakie
 
 function joist_geometry(joist_span, drawing_scale)
 
     
     element = joist_span.model.inputs.element;
     node = joist_span.model.inputs.node;
-    element_nodal_coords = InstantFrame.PlotTools.define_element_nodal_start_end_coordinates(element, node);
-    Xij, Yij, Zij = InstantFrame.PlotTools.get_XYZ_element_ij(element_nodal_coords);
-    X, Y, Z = InstantFrame.PlotTools.get_node_XYZ(node);
+    element_nodal_coords = InstaFrame.PlotTools.define_element_nodal_start_end_coordinates(element, node);
+    Xij, Yij, Zij = InstaFrame.PlotTools.get_XYZ_element_ij(element_nodal_coords);
+    X, Y, Z = InstaFrame.PlotTools.get_node_XYZ(node);
     
     Δx = joist_span.inputs.joist_dimensions.span_length;
     Δy = joist_span.inputs.joist_dimensions.depth;
@@ -32,7 +32,7 @@ function joist_geometry(joist_span, drawing_scale)
     linewidths = member_width ./ maximum(member_width) * width_scale;
    
     attributes = (color=:grey, linewidth=linewidths);
-    InstantFrame.Show.elements!(ax, Xij, Yij, attributes);
+    InstaFrame.Show.elements!(ax, Xij, Yij, attributes);
     resize_to_layout!(figure);
 
     # add splices 
@@ -44,7 +44,7 @@ function joist_geometry(joist_span, drawing_scale)
 
     #add nodes 
     attributes = (size = 3, color = :blue);
-    InstantFrame.Show.nodes!(ax, X, Y, attributes);
+    InstaFrame.Show.nodes!(ax, X, Y, attributes);
 
     return ax, figure
 
@@ -55,9 +55,9 @@ function joist_internal_forces(joist_span, drawing_scale)
 
     element = joist_span.model.inputs.element;
     node = joist_span.model.inputs.node;
-    element_nodal_coords = InstantFrame.PlotTools.define_element_nodal_start_end_coordinates(element, node);
-    Xij, Yij, Zij = InstantFrame.PlotTools.get_XYZ_element_ij(element_nodal_coords);
-    X, Y, Z = InstantFrame.PlotTools.get_node_XYZ(node);
+    element_nodal_coords = InstaFrame.PlotTools.define_element_nodal_start_end_coordinates(element, node);
+    Xij, Yij, Zij = InstaFrame.PlotTools.get_XYZ_element_ij(element_nodal_coords);
+    X, Y, Z = InstaFrame.PlotTools.get_node_XYZ(node);
 
     Δx = joist_span.inputs.joist_dimensions.span_length;
     Δy = joist_span.inputs.joist_dimensions.depth;
@@ -83,7 +83,7 @@ function joist_internal_forces(joist_span, drawing_scale)
     #+ echo=false
     attributes = (scale = 3.0, tension_color="red", compression_color="blue");
     axial_forces = [joist_span.model.solution.forces[i][7] for i in eachindex(joist_span.model.solution.forces)];
-    InstantFrame.Show.axial_force!(ax, Xij, Yij, axial_forces, attributes);
+    InstaFrame.Show.axial_force!(ax, Xij, Yij, axial_forces, attributes);
     resize_to_layout!(figure);
 
     #+ echo=false
@@ -97,7 +97,7 @@ function joist_internal_forces(joist_span, drawing_scale)
     diagonal_element_index = findall(section->occursin("diagonal", section), joist_span.model.inputs.element.cross_section);
     active_element_index = [chord_element_index; diagonal_element_index];
     #+ echo=false
-    InstantFrame.Show.axial_force_magnitude!(ax, joist_span.model.inputs.element, joist_span.model.inputs.node, axial_forces, active_element_index, attributes);
+    InstaFrame.Show.axial_force_magnitude!(ax, joist_span.model.inputs.element, joist_span.model.inputs.node, axial_forces, active_element_index, attributes);
 
     return ax, figure
 

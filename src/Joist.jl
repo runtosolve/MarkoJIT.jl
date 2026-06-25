@@ -1,6 +1,6 @@
 module Joist
 
-using Parameters, InstantFrame, SectionProperties, Serialization 
+using Parameters, InstaFrame, SectionProperties, Serialization 
 using ..Properties, ..Geometry, ..Strength, ..Model, ..MarkoJIT
 
 @with_kw struct Inputs
@@ -69,7 +69,7 @@ end
     inputs::Inputs
     properties::MarkoJIT.Properties.Section
     end_types::Tuple{Float64, Float64}
-    model::InstantFrame.Model
+    model::InstaFrame.Model
     strength::Strength.Components
     deflection::Float64
     demand::ComponentDemands

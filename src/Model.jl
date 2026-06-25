@@ -1,6 +1,6 @@
 module Model
 
-using InstantFrame
+using InstaFrame
 
 using ..Properties, ..Geometry 
 
@@ -14,35 +14,35 @@ function run_joist_analysis_model(coordinates, element_connectivity, elements_by
     #define element types 
     elements_by_section, element_sections = Model.define_element_types(elements_by_component, diagonal_section_assignments)
 
-    material = InstantFrame.Material(names=["steel"], E=[29500000.0], ν=[0.3], ρ=[492.0 / 32.17 / 12^4])  ##ρ = lbs * s^2 / in^4
+    material = InstaFrame.Material(names=["steel"], E=[29500000.0], ν=[0.3], ρ=[492.0 / 32.17 / 12^4])  ##ρ = lbs * s^2 / in^4
 
-    cross_section = InstantFrame.CrossSection(names=[diagonal_dimensions.name; ["top chord", "bottom chord", "top of girder", "rigid"]], A=[[diagonal_section_properties[i].A for i in eachindex(diagonal_section_properties)]; [chord_section_properties.A, chord_section_properties.A, 10.0E1, 10.0E1]], Iy=[[diagonal_section_properties[i].Iyy for i in eachindex(diagonal_section_properties)]; [chord_section_properties.Iyy, chord_section_properties.Iyy, 10.0E1, 10.0E1]], Iz=[[diagonal_section_properties[i].Ixx for i in eachindex(diagonal_section_properties)]; [chord_section_properties.Ixx, chord_section_properties.Ixx, 10.0E1, 10.0E1]], J=[[diagonal_section_properties[i].A for i in eachindex(diagonal_section_properties)]; [chord_section_properties.J, chord_section_properties.J, 10.0E1, 10.0E1]])
+    cross_section = InstaFrame.CrossSection(names=[diagonal_dimensions.name; ["top chord", "bottom chord", "top of girder", "rigid"]], A=[[diagonal_section_properties[i].A for i in eachindex(diagonal_section_properties)]; [chord_section_properties.A, chord_section_properties.A, 10.0E1, 10.0E1]], Iy=[[diagonal_section_properties[i].Iyy for i in eachindex(diagonal_section_properties)]; [chord_section_properties.Iyy, chord_section_properties.Iyy, 10.0E1, 10.0E1]], Iz=[[diagonal_section_properties[i].Ixx for i in eachindex(diagonal_section_properties)]; [chord_section_properties.Ixx, chord_section_properties.Ixx, 10.0E1, 10.0E1]], J=[[diagonal_section_properties[i].A for i in eachindex(diagonal_section_properties)]; [chord_section_properties.J, chord_section_properties.J, 10.0E1, 10.0E1]])
 
-    connection = InstantFrame.Connection(names=["rigid", "pinned"], stiffness=(ux=[Inf, Inf], uy=[Inf, Inf], uz=[Inf, Inf], rx=[Inf, Inf], ry=[Inf, 0.0], rz=[Inf, 0.0]))
+    connection = InstaFrame.Connection(names=["rigid", "pinned"], stiffness=(ux=[Inf, Inf], uy=[Inf, Inf], uz=[Inf, Inf], rx=[Inf, Inf], ry=[Inf, 0.0], rz=[Inf, 0.0]))
 
-    node = InstantFrame.Node(numbers=1:size(joist_nodes, 1), coordinates=joist_nodes)
+    node = InstaFrame.Node(numbers=1:size(joist_nodes, 1), coordinates=joist_nodes)
 
     element_connections = [fill(("pinned", "pinned"), length(elements_by_section.diagonals)); fill(("rigid","rigid"), size(element_connectivity, 1) - length(elements_by_section.diagonals))]
 
     #element_connections = [fill(("rigid", "rigid"), length(elements_by_section.diagonals)); fill(("rigid","rigid"), size(element_connectivity, 1) - length(elements_by_section.diagonals))]
 
 
-    # element = InstantFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=fill("frame", size(element_connectivity, 1)))
+    # element = InstaFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=fill("frame", size(element_connectivity, 1)))
 
-    element = InstantFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=element_labels)
-
-
-    support = InstantFrame.Support(nodes=[node.numbers[end-1], node.numbers[end]], stiffness=(uX=[Inf,0.0], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
-
-    # support = InstantFrame.Support(nodes=[54, 67], stiffness=(uX=[Inf,Inf], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
+    element = InstaFrame.Element(numbers=1:size(element_connectivity, 1), nodes=element_connectivity, orientation=zeros(Float64, size(element_connectivity, 1)), connections=element_connections, cross_section=element_sections, material=fill("steel", size(element_connectivity, 1)), types=element_labels)
 
 
-    uniform_load = InstantFrame.UniformLoad(labels=["gravity loads"], elements=findall(type->type=="top chord", element_sections), magnitudes=(qX=fill(0.0, length(elements_by_component.top_chord)), qY=fill(-1.0/12, length(elements_by_component.top_chord)), qZ=fill(0.0, length(elements_by_component.top_chord)), mX=fill(0.0, length(elements_by_component.top_chord)), mY=fill(0.0, length(elements_by_component.top_chord)), mZ=fill(0.0, length(elements_by_component.top_chord))))
+    support = InstaFrame.Support(nodes=[node.numbers[end-1], node.numbers[end]], stiffness=(uX=[Inf,0.0], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
 
-    point_load = InstantFrame.PointLoad(nothing)
+    # support = InstaFrame.Support(nodes=[54, 67], stiffness=(uX=[Inf,Inf], uY=[Inf,Inf], uZ=[Inf,Inf], rX=[Inf,Inf], rY=[Inf,Inf], rZ=[0.0,0.0]))
+
+
+    uniform_load = InstaFrame.UniformLoad(labels=["gravity loads"], elements=findall(type->type=="top chord", element_sections), magnitudes=(qX=fill(0.0, length(elements_by_component.top_chord)), qY=fill(-1.0/12, length(elements_by_component.top_chord)), qZ=fill(0.0, length(elements_by_component.top_chord)), mX=fill(0.0, length(elements_by_component.top_chord)), mY=fill(0.0, length(elements_by_component.top_chord)), mZ=fill(0.0, length(elements_by_component.top_chord))))
+
+    point_load = InstaFrame.PointLoad(nothing)
 
     # analysis_type = "first order"
-    model = InstantFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, analysis_type="first order")
+    model = InstaFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, analysis_type="first order")
 
     return model
 
