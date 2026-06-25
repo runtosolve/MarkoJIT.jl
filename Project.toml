@@ -1,6 +1,6 @@
 name = "MarkoJIT"
 uuid = "a0750c5e-ed94-4724-bdb6-51a58ed81540"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Cris Moen <cris.moen@runtosolve.com>"]
 
 [deps]
