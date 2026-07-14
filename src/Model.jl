@@ -42,7 +42,7 @@ function run_joist_analysis_model(coordinates, element_connectivity, elements_by
     point_load = InstaFrame.PointLoad(nothing)
 
     # analysis_type = "first order"
-    model = InstaFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, analysis_type="first order")
+    model = InstaFrame.solve(node, cross_section, material, connection, element, support, uniform_load, point_load, "first order", [])
 
     return model
 

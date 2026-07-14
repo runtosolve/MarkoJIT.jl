@@ -586,8 +586,18 @@ function define_chord_splice_locations(span_length)
 
     chord_index = findfirst(span->span==span_length, top_chord[:, 1])
 
-    top_chord_splice_1 = top_chord[chord_index, 4]
-    top_chord_splice_2 = top_chord[chord_index, 5]
+    if !isnothing(chord_index)
+
+        top_chord_splice_1 = top_chord[chord_index, 4]
+        top_chord_splice_2 = top_chord[chord_index, 5]
+
+    else 
+
+        top_chord_splice_1 = 0.0
+        top_chord_splice_2 = 0.0
+
+    end
+
 
     if top_chord_splice_1 == 0.0
         top_chord_splice_1 = []
@@ -601,10 +611,18 @@ function define_chord_splice_locations(span_length)
 
     top_chord_splice_locations = [top_chord_splice_1; top_chord_splice_2]
 
+     if !isnothing(chord_index)    
 
+        bottom_chord_splice_1 = bottom_chord[chord_index, 4]
+        bottom_chord_splice_2 = bottom_chord[chord_index, 5]
 
-    bottom_chord_splice_1 = bottom_chord[chord_index, 4]
-    bottom_chord_splice_2 = bottom_chord[chord_index, 5]
+    else   #for spans less than 36 ft!
+
+        bottom_chord_splice_1 = 0.0
+        bottom_chord_splice_2 = 0.0
+
+    end
+
 
     if bottom_chord_splice_1 == 0.0
         bottom_chord_splice_1 = []
@@ -618,7 +636,16 @@ function define_chord_splice_locations(span_length)
         bottom_chord_splice_2 = span_length - (bottom_chord[chord_index, 3] - 24.0 - 12.0 + bottom_chord_splice_2)
     end
 
+
     bottom_chord_splice_locations = [bottom_chord_splice_1; bottom_chord_splice_2]
+
+    # #assume no splices here!
+    # if span_length < 36.0 
+
+    #     top_chord_splice_locations = [[]; []]
+    #     bottom_chord_splice_locations = [[]; []]
+
+    # end
 
 
     chord_splice_locations = (top = top_chord_splice_locations, bottom = bottom_chord_splice_locations)

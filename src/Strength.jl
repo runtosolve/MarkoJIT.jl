@@ -404,28 +404,71 @@ function calculate_connection_strength_series(connection_types, diagonal_section
 end
 
 
-function calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, chord_dimensions)
+function calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions)
 
     Ag = chord_section_properties.A 
     Py_chord = Ag * joist_material_properties.fy
 
-    #Assume the deck full braces the top chord in compression which means that $P_{ne} = P_y$ in AISI S100-16 Section E2
-    Pne_chord, ePne_chord = AISIS100.v16.e2(Fcre=joist_material_properties.fy*100000, Fy=joist_material_properties.fy, Ag=Ag, design_code=design_code)
+    E = joist_material_properties.E 
+    Ixx = chord_section_properties.Ixx
+    Iyy = chord_section_properties.Iyy
+    Lx = unbraced_lengths.Lx
+    Ly = unbraced_lengths.Ly
+
+    Fcre(E, I, L) = π^2 * E * I / L^2 / Ag
+
+    Fcre_xx = Fcre(E, Ixx, Ly)
+    Fcre_yy = Fcre(E, Iyy, Lx)
+
+    # println("Fcre_xx", Fcre_xx)
+    #  println("Fcre_yy", Fcre_yy)
+
+    Fcre = minimum([Fcre_xx, Fcre_yy])
 
 
-    lengths = collect(0.25*3.0:3.0/20:1.25*3.0)
-    chord_local_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_local_buckling_properties")
-    Pcrℓ_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrl")
+    Pne_chord, ePne_chord = AISIS100.v16.e2(Fcre=Fcre, Fy=joist_material_properties.fy, Ag=Ag, design_code=design_code)
+
+    
+    chord_buckling_results = deserialize(joinpath(@__DIR__, "..", "assets", "chord_buckling_results"))
+
+    # lengths = collect(0.25*3.0:3.0/20:1.25*3.0)
+    # chord_local_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_local_buckling_properties")
+    # Pcrℓ_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrl")
     # Pcrℓ_chord, chord_local_buckling =  Properties.calculate_chord_cross_section_buckling_load(chord_dimensions, joist_material_properties, lengths)
+
+    # mode_label = ["L"]
+    # lengths = 10.0 .^ range(log10(0.5), log10(5.0), length=10)
+    
+    t = chord_dimensions.t 
+    # E = joist_material_properties.E
+    # ν = joist_material_properties.ν 
+    # x = [chord_dimensions.centerline_cross_section_coordinates[i][1] for i in eachindex(chord_dimensions.centerline_cross_section_coordinates)]
+    # y = [chord_dimensions.centerline_cross_section_coordinates[i][2] for i in eachindex(chord_dimensions.centerline_cross_section_coordinates)]
+    # results = Properties.calculate_chord_cross_section_buckling_load(t, E, ν, x, y, mode_label, lengths)
+
+    Pcrℓ_chord = chord_buckling_results[t].local_buckling.Pcr
+    chord_local_buckling = chord_buckling_results[t].local_buckling.model
 
     Pnℓ_chord, ePnℓ_chord = AISIS100.v16.e321(Pne=Pne_chord, Pcrℓ=Pcrℓ_chord, design_code=design_code)
 
 
-    lengths = collect(26.0:1.0:34.0)
+    # lengths = collect(26.0:1.0:34.0)
     # Pcrd_chord, chord_distortional_buckling =  Properties.calculate_chord_cross_section_buckling_load(chord_dimensions, joist_material_properties, lengths)
         
-    chord_distortional_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_distortional_buckling_properties")
-    Pcrd_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrd")
+    # mode_label = ["D"]
+    # lengths = 10.0 .^ range(log10(10), log10(50.0), length=30)
+
+    # results = Properties.calculate_chord_cross_section_buckling_load(t, E, ν, x, y, mode_label, lengths)
+    # # Pcrℓ_chord = results.Pcr 
+    # # chord_local_buckling = results.model
+
+    # # chord_distortional_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_distortional_buckling_properties")
+    # # Pcrd_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrd")
+
+    Pcrd_chord = chord_buckling_results[t].distortional_buckling.Pcr
+    chord_distortional_buckling = chord_buckling_results[t].distortional_buckling.model
+    # chord_distortional_buckling = results.model 
+    # Pcrd_chord = results.Pcr
 
     Pnd_chord, ePnd_chord = AISIS100.v16.e41(Py=Py_chord, Pcrd=Pcrd_chord, design_code=design_code)
 

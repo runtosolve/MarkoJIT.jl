@@ -127,7 +127,7 @@ function calculate_demand_to_capacity(demand, capacity)
 end
 
 
-function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections)
+function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_lengths)
 
 
     joist_end_types = MarkoJIT.Geometry.define_joist_ends(joist_dimensions.span_length, joist_dimensions.node_spacing)
@@ -140,7 +140,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     #diagonal section properties
     diagonal_section_geometry = [MarkoJIT.Geometry.define_diagonal_cross_section_geometry(diagonal_dimensions.B[i], diagonal_dimensions.H[i], diagonal_dimensions.R[i], diagonal_dimensions.t[i]) for i in eachindex(diagonal_dimensions.t)]
 
-    diagonal_section_properties = [SectionProperties.open_thin_walled(diagonal_section_geometry[i].center, fill(diagonal_dimensions.t[i], length(diagonal_section_geometry[i].center)-1)) for i in eachindex(diagonal_dimensions.t)]
+    diagonal_section_properties = [SectionProperties.open_thin_walled(diagonal_section_geometry[i].centerline_node_XY, fill(diagonal_dimensions.t[i], length(diagonal_section_geometry[i].centerline_node_XY)-1)) for i in eachindex(diagonal_dimensions.t)]
 
 
     properties = MarkoJIT.Properties.Section(chord=chord_section_properties, diagonals=diagonal_section_properties)
@@ -192,7 +192,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     diagonal_compressive_strength = Strength.calculate_all_diagonal_compressive_strengths(diagonal_sections, diagonal_dimensions, Lu, Pcre_diagonal, diagonal_global_buckling, Pcrℓ_diagonal, diagonal_local_buckling, diagonal_section_properties, joist_material_properties.fy, design_code)
 
     ####chord strength
-    chord_compressive_strength = Strength.calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, chord_dimensions)
+    chord_compressive_strength = Strength.calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions)
 
     #chord tensile strength 
     chord_tensile_strength = Strength.calculate_chord_tensile_strength(chord_section_properties, chord_dimensions, joist_material_properties, design_code)

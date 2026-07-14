@@ -33,6 +33,46 @@ function generate_MIN_MAX_span_table_results(span_lengths, joist_depth, bolt_pro
 end
 
 
+
+
+function generate_MAX_span_table_results(span_lengths, joist_depth, bolt_properties, joist_material_properties, diagonal_size_MAX, design_code, chord_dimensions, diagonal_dimensions, shield_plate_dimensions, bearing_seat_dimensions, chord_splice_dimensions, girder_dimensions, girder_material_properties, bearing_seat_weld_properties, unbraced_chord_lengths)
+
+    JIT_MAX_spans = Vector{Joist.JoistSpan}(undef, length(span_lengths))
+    # JIT_MIN_spans = Vector{Joist.JoistSpan}(undef, length(span_lengths))
+
+    for i in eachindex(span_lengths)
+        joist_dimensions = Geometry.JoistDimensions(span_length = span_lengths[i], depth = joist_depth, node_spacing = 48.0, bottom_chord_tail_length = 12.0);
+        num_diagonals = Geometry.calculate_number_of_joist_diagonals(joist_dimensions.span_length, joist_dimensions.node_spacing);
+        diagonal_sections = [[diagonal_size_MAX, diagonal_size_MAX]; fill(diagonal_size_MAX, num_diagonals - 4); [diagonal_size_MAX, diagonal_size_MAX]];
+        diagonal_bracing = [["braced", "braced"]; fill("braced", num_diagonals - 4); ["braced", "braced"]];
+        top_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"];
+        bottom_chord_connections = ["bearing seat"; fill("reinforced connection", num_diagonals-2); "bearing seat"];
+        
+        #catch bridging conditions for short spans 
+        if span_lengths[i] < unbraced_chord_lengths.Ly
+
+            unbraced_chord_lengths = (Lx=48.0, Ly = span_lengths[i])
+
+        end
+        
+        JIT_MAX_spans[i] = Joist.evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_chord_lengths);
+
+
+        # joist_dimensions = Geometry.JoistDimensions(span_length = span_lengths[i], depth = joist_depth, node_spacing = 48.0, bottom_chord_tail_length = 12.0);
+        # num_diagonals = Geometry.calculate_number_of_joist_diagonals(joist_dimensions.span_length, joist_dimensions.node_spacing);
+        # diagonal_sections = [[diagonal_size_MIN[1], diagonal_size_MIN[1]]; fill(diagonal_size_MIN[2], num_diagonals - 4); [diagonal_size_MIN[1], diagonal_size_MIN[1]]];
+        # diagonal_bracing = [["unbraced", "unbraced"]; fill("unbraced", num_diagonals - 4); ["unbraced", "unbraced"]];
+        # top_chord_connections = ["bearing seat"; fill("unreinforced connection", num_diagonals-2); "bearing seat"];
+        # bottom_chord_connections = ["bearing seat"; fill("unreinforced connection", num_diagonals-2); "bearing seat"];
+        # JIT_MIN_spans[i] = Joist.evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections);
+
+    end
+
+    return JIT_MAX_spans
+
+end
+
+
 function display_span_table(results_path, results_files, span_lengths, table_range)
 
     JIT36_MIN_spans = deserialize(joinpath(results_path, results_files[1]))
