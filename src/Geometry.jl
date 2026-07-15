@@ -1,6 +1,6 @@
 module Geometry
 
-using DataFrames, LinearAlgebra, Statistics, Parameters, CrossSectionGeometry
+using DataFrames, LinearAlgebra, Statistics, Parameters, CrossSectionGeometry, CSV, DataFrames
 
 @with_kw struct ShieldPlateDimensions
 
@@ -73,7 +73,15 @@ end
 
 end
 
+function get_chord_centerline_cross_section_coordinates()
 
+
+    file = joinpath(@__DIR__, "..", "assets", "chord_centerline_cross_section_coordinates.csv")
+    chord_cross_section = CSV.read(file, DataFrame)
+
+    return chord_cross_section
+
+end
 
 
 function define_joist_ends(span_length, node_spacing)
