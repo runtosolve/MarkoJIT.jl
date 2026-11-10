@@ -261,15 +261,16 @@ end
 
 #### bolted connections
 
-# one bolted joint with num_bolts bolts in single shear (standard holes, no washers); the bearing check uses the thinner ply
-function calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_ply1, t_ply2, num_bolts)
+# one bolted joint with num_bolts bolts in single shear (standard holes); the bearing check uses the thinner ply.
+# washers = true: washers under both the bolt head and the nut, mf = 1.00 instead of 0.75 (Table J3.3.1-2)
+function calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_ply1, t_ply2, num_bolts; washers::Bool = false)
 
     Ab = π * (bolt_diameter/2)^2
     shear = DesignCode.bolt_shear(Ab, Fnv, design_code)                       #App. A J3.4
 
     t = min(t_ply1, t_ply2)
     C = DesignCode.bearing_factor(bolt_diameter, t, design_code)               #Table J3.3.1-1
-    mf = DesignCode.bearing_modification_factor(design_code)                   #Table J3.3.1-2
+    mf = DesignCode.bearing_modification_factor(design_code; washers = washers) #Table J3.3.1-2
     bearing = DesignCode.bolt_bearing(C, mf, bolt_diameter, t, Fu, design_code)  #J3.3.1
 
     limit_state_strengths = (bolt_shear=shear.eRn, bolt_bearing=bearing.eRn)
@@ -282,9 +283,7 @@ end
 
 
 # diagonal to chord joint with a shield plate (4 bolts in the joint, 2 shield plate slotted-hole shear planes)
-function calculate_reinforced_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_chord, t_diagonal, t_shield_plate, shield_plate_slotted_hole_edge_distance; engineering_judgement = false)
-
-    s = DesignCode.spec(design_code)
+function calculate_reinforced_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_chord, t_diagonal, t_shield_plate, shield_plate_slotted_hole_edge_distance)
 
     Ab = π * (bolt_diameter/2)^2
     shear = DesignCode.bolt_shear(Ab, Fnv, design_code)
@@ -299,18 +298,10 @@ function calculate_reinforced_connection_strength(bolt_diameter, Fnv, Fu, design
     Anv = shield_plate_slotted_hole_edge_distance * t_shield_plate * 2       #Eq. J6.1-2, n = 1
     rupture = DesignCode.shear_rupture_bolts(Anv, Fu, design_code)            #J6.1, Table J6-1
 
-    if engineering_judgement
-        # rational engineering analysis for the shield plate connection, S100-16 A1.2(c) / S100-2024 A1.2.6(c)
-        f = DesignCode.rational_analysis_connection_factors(design_code)
-        factor(Rn) = DesignCode.factored(Rn, f.Ω, f.ϕ_LRFD, f.ϕ_LSD, s)
-        ePnb_shield_plate = factor(bearing_shield_plate.Rn)
-        ePnb_diagonal = factor(bearing_diagonal.Rn)
-        limit_state_strengths = (bolt_shear = shear.eRn*4, shield_plate_shear_rupture = factor(rupture.Rn)*2 + ePnb_diagonal*2, bolt_bearing = ePnb_diagonal*2 + ePnb_shield_plate*2)
-    else
-        ePnb_shield_plate = bearing_shield_plate.eRn
-        ePnb_diagonal = bearing_diagonal.eRn
-        limit_state_strengths = (bolt_shear = shear.eRn*4, shield_plate_shear_rupture = rupture.eRn*2 + ePnb_diagonal*2, bolt_bearing = ePnb_diagonal*2 + ePnb_shield_plate*2)
-    end
+    # each limit state uses its own code-specified safety / resistance factor (J3.4, J3.3.1, J6.1)
+    ePnb_shield_plate = bearing_shield_plate.eRn
+    ePnb_diagonal = bearing_diagonal.eRn
+    limit_state_strengths = (bolt_shear = shear.eRn*4, shield_plate_shear_rupture = rupture.eRn*2 + ePnb_diagonal*2, bolt_bearing = ePnb_diagonal*2 + ePnb_shield_plate*2)
 
     eRn = minimum(limit_state_strengths)
 
@@ -398,9 +389,10 @@ function calculate_chord_compressive_strength(chord_section_properties, joist_ma
 
 end
 
-function calculate_chord_splice_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord; num_bolts = 12)
+# chord splice channel to chord, 12 bolts; washers = true for washers under both bolt head and nut (mf = 1.00)
+function calculate_chord_splice_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord; num_bolts = 12, washers::Bool = false)
 
-    return calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord, num_bolts)
+    return calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord, num_bolts; washers = washers)
 
 end
 

@@ -127,9 +127,10 @@ function calculate_demand_to_capacity(demand, capacity)
 end
 
 
-function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_lengths; chord_Pcrℓ = nothing, chord_Pcrd = nothing)
+function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_lengths; chord_Pcrℓ = nothing, chord_Pcrd = nothing, chord_splice_washers::Bool = false)
 
     # design_code selects the AISI S100 edition and method, e.g. "AISI S100-16 ASD" or "AISI S100-24 ASD" (see DesignCode.jl)
+    # chord_splice_washers = true: washers under both bolt head and nut at the chord splices (mf = 1.00, Table J3.3.1-2)
     MarkoJIT.DesignCode.spec(design_code)
 
     joist_end_types = MarkoJIT.Geometry.define_joist_ends(joist_dimensions.span_length, joist_dimensions.node_spacing)
@@ -200,7 +201,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     chord_tensile_strength = Strength.calculate_chord_tensile_strength(chord_section_properties, chord_dimensions, joist_material_properties, design_code)
 
     #chord splice 
-    chord_splice_strength = Strength.calculate_chord_splice_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, chord_splice_dimensions.t, chord_dimensions.t)
+    chord_splice_strength = Strength.calculate_chord_splice_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, chord_splice_dimensions.t, chord_dimensions.t; washers = chord_splice_washers)
 
     #bearing seat weld strength 
     bearing_seat_weld_strength = Strength.calculate_bearing_seat_weld_strength(bearing_seat_weld_properties, bearing_seat_dimensions, joist_material_properties, girder_dimensions, girder_material_properties, design_code)

@@ -21,7 +21,6 @@ module DesignCode
 #   bolt bearing               J3.3.1 + tables        unchanged
 #   bolt shear                 App. A J3.4            unchanged
 #   shear rupture              J6.1 + Table J6-1      CHANGED: bolts Ω = 2.22 → 2.00, ϕ(LRFD) = 0.65 → 0.75
-#   rational eng. analysis     A1.2(c) / A1.2.6(c)    unchanged: connections Ω = 3.00, ϕ = 0.55 (LRFD), 0.50 (LSD)
 
 using AISIS100, Unitful
 
@@ -53,8 +52,6 @@ end
 spec(s::Spec) = s
 
 edition_label(s::Spec) = s.edition == :S100_16 ? "AISI S100-16" : "AISI S100-2024"
-
-factored(Rn, Ω, ϕ_LRFD, ϕ_LSD, s::Spec) = s.method == "ASD" ? Rn / Ω : (s.method == "LRFD" ? Rn * ϕ_LRFD : Rn * ϕ_LSD)
 
 #### Chapter D -- tension
 
@@ -136,13 +133,15 @@ function bearing_factor(d, t, design_code)
     end
 end
 
-# Table J3.3.1-2, single shear, standard holes, no washers under both head and nut
-function bearing_modification_factor(design_code)
+# Table J3.3.1-2, single shear, standard holes: mf = 0.75 without washers (or with only one washer),
+# mf = 1.00 with washers under both the bolt head and the nut (washers = true)
+function bearing_modification_factor(design_code; washers::Bool = false)
     s = spec(design_code)
+    w = washers ? "yes" : "no"
     if s.edition == :S100_16
-        return AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
+        return AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers=w)
     else
-        return AISIS100.v2024.table_j3_3_1__2("single shear", "standard hole", "no")
+        return AISIS100.v2024.table_j3_3_1__2("single shear", "standard hole", w)
     end
 end
 
@@ -177,12 +176,6 @@ function shear_rupture_bolts(Anv, Fu, design_code)
     else
         return AISIS100.v2024.j6_1__1(Fu, Anv, "bolts", s.method)
     end
-end
-
-# rational engineering analysis factors for connections, S100-16 A1.2(c) / S100-2024 A1.2.6(c)
-function rational_analysis_connection_factors(design_code)
-    spec(design_code)   # validates the string; the factors are the same in both editions
-    return (Ω=3.00, ϕ_LRFD=0.55, ϕ_LSD=0.50)
 end
 
 end # module
