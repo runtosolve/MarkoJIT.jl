@@ -1,8 +1,14 @@
 module Strength
 
-using Parameters, AISIS100, CUFSM, Unitful, Serialization
+# Component strengths of the Marko JIT joist.
+#
+# The AISI S100 edition and design method are selected by the `design_code` string, e.g.
+# "AISI S100-16 ASD" or "AISI S100-24 ASD" (LRFD and LSD also accepted). All S100 equations are
+# called through MarkoJIT.DesignCode, which dispatches to AISIS100.v16 or AISIS100.v2024.
 
-using ..Properties, ..Geometry
+using Parameters, CUFSM, Serialization
+
+using ..Properties, ..Geometry, ..DesignCode
 
 @with_kw struct DiagonalTension
 
@@ -20,9 +26,9 @@ end
 
     Lu::Float64
     Pcre::Float64
-    global_buckling_properties::CUFSM.Model
+    global_buckling_properties::Union{Nothing, CUFSM.Model}
     Pcrℓ::Float64
-    local_buckling_properties::CUFSM.Model
+    local_buckling_properties::Union{Nothing, CUFSM.Model}
     Py::Float64
     Pne::Float64
     ePne::Float64
@@ -50,7 +56,7 @@ end
 
 
 @with_kw struct ReinforcedConnection
-    
+
     Ab::Float64
     C::Float64
     mf::Float64
@@ -72,19 +78,19 @@ end
 
 @with_kw struct ChordCompression
 
-    Ag::Float64 
-    Py::Float64 
-    Pne::Float64 
-    ePne::Float64 
-    Pcrℓ::Float64 
-    local_buckling_properties::CUFSM.Model
-    Pnℓ::Float64  
-    ePnℓ::Float64 
-    Pcrd::Float64 
-    distortional_buckling_properties::CUFSM.Model
-    Pnd::Float64 
-    ePnd::Float64 
-    ePn::Float64 
+    Ag::Float64
+    Py::Float64
+    Pne::Float64
+    ePne::Float64
+    Pcrℓ::Float64
+    local_buckling_properties::Union{Nothing, CUFSM.Model}
+    Pnℓ::Float64
+    ePnℓ::Float64
+    Pcrd::Float64
+    distortional_buckling_properties::Union{Nothing, CUFSM.Model}
+    Pnd::Float64
+    ePnd::Float64
+    ePn::Float64
 
 end
 
@@ -93,44 +99,44 @@ end
     Ag::Float64
     Tn_y::Float64
     eTn_y::Float64
-    Anet::Float64 
-    Tn_u::Float64 
+    Anet::Float64
+    Tn_u::Float64
     eTn_u::Float64
-    eTn::Float64 
+    eTn::Float64
 
 end
 
 
 @with_kw struct BearingSeatWeld
-    
+
     L::Float64
     t1::Float64
     Fu1::Float64
-    t2::Float64 
+    t2::Float64
     Fu2::Float64
     tw::Float64
     Fxx::Float64
     loading_direction::String
     Pnv1::Float64
-    Pnv2::Float64 
-    Pn::Float64 
-    Pnv::Float64 
-    ePnv::Float64 
-    num_weld_lines::Int64 
+    Pnv2::Float64
+    Pn::Float64
+    Pnv::Float64
+    ePnv::Float64
+    num_weld_lines::Int64
     eRn::Float64
 
 end
 
 @with_kw struct BearingSeatCompression
-    
+
     compression_field_width::Float64
-    fcrℓ::Float64 
-    fy::Float64 
+    fcrℓ::Float64
+    fy::Float64
     Pcrℓ::Float64
-    Pne::Float64 
-    Pnℓ::Float64 
-    ePnℓ::Float64 
-    num_bearing_seat_webs::Int64 
+    Pne::Float64
+    Pnℓ::Float64
+    ePnℓ::Float64
+    num_bearing_seat_webs::Int64
     eRn::Float64
 
 end
@@ -162,23 +168,21 @@ end
 end
 
 
-
+#### diagonals
 
 function calculate_diagonal_tensile_strength(bolt_hole_diameter, t, diagonal_section_properties, joist_material_properties, design_code)
 
     Ag = diagonal_section_properties.A
 
-    Tny, eTny = AISIS100.v16.d21(Ag=Ag, Fy=joist_material_properties.fy, design_code=design_code)
+    yield = DesignCode.tension_yield(Ag, joist_material_properties.fy, design_code)            #D2
 
     Anet = Ag - 2 * bolt_hole_diameter * t
 
-    Tnu, eTnu = AISIS100.v16.d31(An=Anet, Fu=joist_material_properties.fu, design_code=design_code)
+    rupture = DesignCode.tension_rupture(Anet, joist_material_properties.fu, design_code)      #D3
 
-    eTn = minimum([eTny, eTnu])
+    eTn = min(yield.eRn, rupture.eRn)
 
-    diagonal_tensile_strength = DiagonalTension(Ag=Ag, Anet=Anet, Tny=Tny, eTny=eTny, Tnu=Tnu, eTnu=eTnu, eTn=eTn)
-
-    return diagonal_tensile_strength
+    return DiagonalTension(Ag=Ag, Anet=Anet, Tny=yield.Rn, eTny=yield.eRn, Tnu=rupture.Rn, eTnu=rupture.eRn, eTn=eTn)
 
 end
 
@@ -198,6 +202,8 @@ function calculate_diagonal_global_buckling(model, diagonal_section_assignments,
             L[i] = model.properties.L[diagonal_index[i]]
         elseif diagonal_bracing[i] == "braced"
             L[i] = model.properties.L[diagonal_index[i]]/2
+        else
+            throw(ArgumentError("diagonal_bracing must be \"braced\" or \"unbraced\", got $(diagonal_bracing[i])"))
         end
 
         Pcre_diagonal[i], diagonal_global_buckling[i] = Properties.calculate_diagonal_global_buckling_load(diagonal_section_geometry[section_index], diagonal_dimensions.t[section_index], joist_material_properties.E, joist_material_properties.ν, L[i])
@@ -210,13 +216,13 @@ end
 
 function calculate_all_diagonal_tensile_strengths(diagonal_section_assignments, diagonal_dimensions, diagonal_section_properties, joist_material_properties, bolt_hole_diameter, design_code)
 
-    diagonal_tensile_strength = Vector{Strength.DiagonalTension}(undef, length(diagonal_section_assignments))
+    diagonal_tensile_strength = Vector{DiagonalTension}(undef, length(diagonal_section_assignments))
 
     for i in eachindex(diagonal_section_assignments)
 
         section_index = findfirst(section->section==diagonal_section_assignments[i], diagonal_dimensions.name)
 
-        diagonal_tensile_strength[i] = Strength.calculate_diagonal_tensile_strength(bolt_hole_diameter, diagonal_dimensions.t[section_index], diagonal_section_properties[section_index], joist_material_properties, design_code)
+        diagonal_tensile_strength[i] = calculate_diagonal_tensile_strength(bolt_hole_diameter, diagonal_dimensions.t[section_index], diagonal_section_properties[section_index], joist_material_properties, design_code)
 
     end
 
@@ -224,12 +230,10 @@ function calculate_all_diagonal_tensile_strengths(diagonal_section_assignments, 
 
 end
 
-
-
-
 function calculate_all_diagonal_compressive_strengths(diagonal_section_assignments, diagonal_dimensions, Lu, Pcre, diagonal_global_buckling, Pcrℓ, diagonal_local_buckling, diagonal_section_properties, fy, design_code)
 
     diagonal_compressive_strength = Vector{DiagonalCompression}(undef, length(diagonal_section_assignments))
+
     for i in eachindex(diagonal_section_assignments)
 
         section_index = findfirst(section->section==diagonal_section_assignments[i], diagonal_dimensions.name)
@@ -238,132 +242,79 @@ function calculate_all_diagonal_compressive_strengths(diagonal_section_assignmen
 
     end
 
-    return diagonal_compressive_strength 
+    return diagonal_compressive_strength
 
 end
 
+# diagonal_global_buckling and diagonal_local_buckling are the CUFSM models (stored for reporting only; `nothing` is accepted)
 function calculate_diagonal_compressive_strength(Lu, Pcre, diagonal_global_buckling, Pcrℓ, diagonal_local_buckling, A, fy, design_code)
 
     Py = fy * A
 
-	Pne, ePne = AISIS100.v16.e2(Fcre=Pcre/A, Fy=fy, Ag=A, design_code=design_code)
-    Pnℓ, ePnℓ = AISIS100.v16.e321(Pne=Pne, Pcrℓ=Pcrℓ, design_code=design_code)
+    global_ = DesignCode.compression_global(Pcre/A, fy, A, design_code)     #E2
+    local_ = DesignCode.compression_local(global_.Rn, Pcrℓ, design_code)    #E3.2
 
-    diagonal_compressive_strength = Strength.DiagonalCompression(Lu = Lu, Pcre=Pcre, global_buckling_properties = diagonal_global_buckling, Pcrℓ=Pcrℓ, local_buckling_properties = diagonal_local_buckling, Py=Py, Pne=Pne, ePne=ePne, Pnℓ=Pnℓ, ePnℓ=ePnℓ)
-   
-    return diagonal_compressive_strength
+    return DiagonalCompression(Lu=Lu, Pcre=Pcre, global_buckling_properties=diagonal_global_buckling, Pcrℓ=Pcrℓ, local_buckling_properties=diagonal_local_buckling, Py=Py, Pne=global_.Rn, ePne=global_.eRn, Pnℓ=local_.Rn, ePnℓ=local_.eRn)
 
-		
 end
 
-	
-# function calculate_unreinforced_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_ply, t_diagonal)
 
-#     Ab = π * (bolt_diameter/2)^2
-#     Pn_bolt, ePn_bolt = AISIS100.v16.appAj341(Ab = Ab, Fn = Fnv, design_code = design_code)
+#### bolted connections
 
-# 	C = AISIS100.v16.tablej3311(d=bolt_diameter*u"inch", t=minimum([t_ply, t_diagonal])*u"inch", hole_shape = "standard hole")
-	
-# 	mf = AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-# 	Pnb, ePnb = AISIS100.v16.j3311(C=C, mf=mf, d=bolt_diameter, t=minimum([t_ply, t_diagonal]), Fu=Fu, design_code=design_code)
-	
-#     limit_state_strengths = (bolt_shear=ePn_bolt, bolt_bearing=ePnb)
-
-#     eRn = minimum([ePn_bolt; ePnb]) * 2
-
-#     connection_strength = UnreinforcedConnection(Ab=Ab, Fnv=Fnv, Pn_bolt=Pn_bolt, ePn_bolt=ePn_bolt, C=C, mf=mf, Pnb=Pnb, ePnb=ePnb, limit_state_strengths = limit_state_strengths, num_bolts=2, eRn=eRn) 
-	
-# 	return connection_strength
-
-# end
-
-
+# one bolted joint with num_bolts bolts in single shear (standard holes, no washers); the bearing check uses the thinner ply
 function calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_ply1, t_ply2, num_bolts)
 
     Ab = π * (bolt_diameter/2)^2
-    Pn_bolt, ePn_bolt = AISIS100.v16.appAj341(Ab = Ab, Fn = Fnv, design_code = design_code)
+    shear = DesignCode.bolt_shear(Ab, Fnv, design_code)                       #App. A J3.4
 
-	C = AISIS100.v16.tablej3311(d=bolt_diameter*u"inch", t=minimum([t_ply1, t_ply2])*u"inch", hole_shape = "standard hole")
-	
-	mf = AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb, ePnb = AISIS100.v16.j3311(C=C, mf=mf, d=bolt_diameter, t=minimum([t_ply1, t_ply2]), Fu=Fu, design_code=design_code)
-	
-    limit_state_strengths = (bolt_shear=ePn_bolt, bolt_bearing=ePnb)
+    t = min(t_ply1, t_ply2)
+    C = DesignCode.bearing_factor(bolt_diameter, t, design_code)               #Table J3.3.1-1
+    mf = DesignCode.bearing_modification_factor(design_code)                   #Table J3.3.1-2
+    bearing = DesignCode.bolt_bearing(C, mf, bolt_diameter, t, Fu, design_code)  #J3.3.1
 
-    eRn = minimum([ePn_bolt; ePnb]) * num_bolts
+    limit_state_strengths = (bolt_shear=shear.eRn, bolt_bearing=bearing.eRn)
 
-    connection_strength = UnreinforcedConnection(Ab=Ab, Fnv=Fnv, Pn_bolt=Pn_bolt, ePn_bolt=ePn_bolt, C=C, mf=mf, Pnb=Pnb, ePnb=ePnb, limit_state_strengths = limit_state_strengths, num_bolts=num_bolts, eRn=eRn) 
-	
-	return connection_strength
+    eRn = min(shear.eRn, bearing.eRn) * num_bolts
+
+    return UnreinforcedConnection(Ab=Ab, Fnv=Fnv, Pn_bolt=shear.Rn, ePn_bolt=shear.eRn, C=C, mf=mf, Pnb=bearing.Rn, ePnb=bearing.eRn, limit_state_strengths=limit_state_strengths, num_bolts=num_bolts, eRn=eRn)
 
 end
 
 
-function calculate_reinforced_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_chord, t_diagonal, t_shield_plate, shield_plate_slotted_hole_edge_distance)
+# diagonal to chord joint with a shield plate (4 bolts in the joint, 2 shield plate slotted-hole shear planes)
+function calculate_reinforced_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_chord, t_diagonal, t_shield_plate, shield_plate_slotted_hole_edge_distance; engineering_judgement = false)
 
-    engineering_judgement = "NO"
+    s = DesignCode.spec(design_code)
 
     Ab = π * (bolt_diameter/2)^2
-	Pn_bolt, ePn_bolt = AISIS100.v16.appAj341(Ab = Ab, Fn = Fnv, design_code = design_code)
-	
-    C = AISIS100.v16.tablej3311(d=bolt_diameter*u"inch", t=minimum([t_chord, t_diagonal])*u"inch", hole_shape = "standard hole")
-	
-	mf = AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb_shield_plate, ePnb_shield_plate = AISIS100.v16.j3311(C=C, mf=mf, d=bolt_diameter, t=minimum([t_diagonal, t_chord, t_shield_plate]), Fu=Fu, design_code=design_code)
-	
-	Pnb_diagonal, ePnb_diagonal = AISIS100.v16.j3311(C=C, mf=mf, d=bolt_diameter, t=minimum([t_diagonal, t_chord, t_shield_plate]), Fu=Fu, design_code=design_code)
-	
-	Anv = shield_plate_slotted_hole_edge_distance * t_shield_plate * 2
-	
-	Pnv, ePnv = AISIS100.v16.j611(Anv, Fu, design_code, "bolts")
-	
+    shear = DesignCode.bolt_shear(Ab, Fnv, design_code)
 
-    if engineering_judgement == "YES"
-        #consider AISI S100-16 Section A1.2, engineering judgement for the shield plate connection, which means that Ω=3.0 and ϕ = 0.55.
+    C = DesignCode.bearing_factor(bolt_diameter, min(t_chord, t_diagonal), design_code)
+    mf = DesignCode.bearing_modification_factor(design_code)
 
-        if design_code == "AISI S100-16 ASD"
+    t_bearing = min(t_diagonal, t_chord, t_shield_plate)
+    bearing_shield_plate = DesignCode.bolt_bearing(C, mf, bolt_diameter, t_bearing, Fu, design_code)
+    bearing_diagonal = DesignCode.bolt_bearing(C, mf, bolt_diameter, t_bearing, Fu, design_code)
 
-            Ω = 3.0
-            limit_state_strengths = (bolt_shear = ePn_bolt*4, shield_plate_shear_rupture=(Pnv / Ω) * 2+ (Pnb_diagonal / Ω) * 2, bolt_bearing = (Pnb_diagonal / Ω) * 2 + (Pnb_shield_plate / Ω) * 2)
+    Anv = shield_plate_slotted_hole_edge_distance * t_shield_plate * 2       #Eq. J6.1-2, n = 1
+    rupture = DesignCode.shear_rupture_bolts(Anv, Fu, design_code)            #J6.1, Table J6-1
 
-        elseif design_code == "AISI S100-16 LRFD"
-
-            ϕ = 0.55
-            limit_state_strengths = (bolt_shear = ePn_bolt*4, shield_plate_shear_rupture=(ϕ * Pnv) * 2+ (ϕ * Pnb_diagonal) * 2, bolt_bearing = (ϕ * Pnb_diagonal) * 2 + (ϕ * Pnb_shield_plate) * 2)
-
-        end
-
-        eRn = minimum(limit_state_strengths)
-        
-
-        if design_code == "AISI S100-16 ASD"
-
-            Ω = 3.0
-            connection_strength = ReinforcedConnection(Ab=Ab, C=C, mf=mf, Pn_bolt=Pn_bolt, Fnv = Fnv, ePn_bolt=ePn_bolt, Pnb_shield_plate=Pnb_shield_plate, ePnb_shield_plate=Pnb_shield_plate/Ω, Pnb_diagonal=Pnb_diagonal, ePnb_diagonal=Pnb_diagonal/Ω, Anv=Anv, Pnv=Pnv, ePnv=ePnv, limit_state_strengths=limit_state_strengths, eRn=eRn)
-
-        elseif design_code == "AISI S100-16 LRFD"
-
-            ϕ = 0.55
-            connection_strength = ReinforcedConnection(Ab=Ab, C=C, mf=mf, Pn_bolt=Pn_bolt, Fnv = Fnv, ePn_bolt=ePn_bolt, Pnb_shield_plate=Pnb_shield_plate, ePnb_shield_plate=Pnb_shield_plate * ϕ, Pnb_diagonal=Pnb_diagonal, ePnb_diagonal=Pnb_diagonal * ϕ, Anv=Anv, Pnv=Pnv, ePnv=ePnv, limit_state_strengths=limit_state_strengths, eRn=eRn)
-
-        end
-
-    elseif engineering_judgement == "NO"
-
-        limit_state_strengths = (bolt_shear = ePn_bolt*4, shield_plate_shear_rupture = ePnv * 2 + ePnb_diagonal * 2, bolt_bearing = ePnb_diagonal * 2 + ePnb_shield_plate * 2)
-
-        eRn = minimum(limit_state_strengths)
-
-        connection_strength = ReinforcedConnection(Ab=Ab, C=C, mf=mf, Pn_bolt=Pn_bolt, Fnv = Fnv, ePn_bolt=ePn_bolt, Pnb_shield_plate=Pnb_shield_plate, ePnb_shield_plate=ePnb_shield_plate, Pnb_diagonal=Pnb_diagonal, ePnb_diagonal=ePnb_diagonal, Anv=Anv, Pnv=Pnv, ePnv=ePnv, limit_state_strengths=limit_state_strengths, eRn=eRn)
-
-
+    if engineering_judgement
+        # rational engineering analysis for the shield plate connection, S100-16 A1.2(c) / S100-2024 A1.2.6(c)
+        f = DesignCode.rational_analysis_connection_factors(design_code)
+        factor(Rn) = DesignCode.factored(Rn, f.Ω, f.ϕ_LRFD, f.ϕ_LSD, s)
+        ePnb_shield_plate = factor(bearing_shield_plate.Rn)
+        ePnb_diagonal = factor(bearing_diagonal.Rn)
+        limit_state_strengths = (bolt_shear = shear.eRn*4, shield_plate_shear_rupture = factor(rupture.Rn)*2 + ePnb_diagonal*2, bolt_bearing = ePnb_diagonal*2 + ePnb_shield_plate*2)
+    else
+        ePnb_shield_plate = bearing_shield_plate.eRn
+        ePnb_diagonal = bearing_diagonal.eRn
+        limit_state_strengths = (bolt_shear = shear.eRn*4, shield_plate_shear_rupture = rupture.eRn*2 + ePnb_diagonal*2, bolt_bearing = ePnb_diagonal*2 + ePnb_shield_plate*2)
     end
 
+    eRn = minimum(limit_state_strengths)
 
-    return connection_strength
+    return ReinforcedConnection(Ab=Ab, C=C, mf=mf, Pn_bolt=shear.Rn, Fnv=Fnv, ePn_bolt=shear.eRn, Pnb_shield_plate=bearing_shield_plate.Rn, ePnb_shield_plate=ePnb_shield_plate, Pnb_diagonal=bearing_diagonal.Rn, ePnb_diagonal=ePnb_diagonal, Anv=Anv, Pnv=rupture.Rn, ePnv=rupture.eRn, limit_state_strengths=limit_state_strengths, eRn=eRn)
 
 end
 
@@ -376,25 +327,20 @@ function calculate_connection_strength_series(connection_types, diagonal_section
 
         section_index = findfirst(section->section==diagonal_section_assignments[i], diagonal_dimensions.name)
 
-        if connection_types[i] == "bearing seat" 
-
+        if connection_types[i] == "bearing seat"
             #diagonal to bearing seat
-            num_bolts = 4
-            connection_strength_series[i] = calculate_bolted_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, diagonal_dimensions.t[section_index], num_bolts)
-
-            # connection_strength_series[i] = calculate_unreinforced_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, diagonal_dimensions.t[section_index])
+            connection_strength_series[i] = calculate_bolted_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, diagonal_dimensions.t[section_index], 4)
 
         elseif connection_types[i] == "unreinforced connection"
             #diagonal to chord
-            num_bolts = 2
-            connection_strength_series[i] = calculate_bolted_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, chord_dimensions.t, diagonal_dimensions.t[section_index], num_bolts)
-            # connection_strength_series[i] = calculate_unreinforced_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, chord_dimensions.t, diagonal_dimensions.t[section_index])
+            connection_strength_series[i] = calculate_bolted_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, chord_dimensions.t, diagonal_dimensions.t[section_index], 2)
 
         elseif connection_types[i] == "reinforced connection"
-            
             #diagonal to chord with shield plate
             connection_strength_series[i] = calculate_reinforced_connection_strength(bolt.diameter, bolt.Fnv, joist_material_properties.fu, design_code, chord_dimensions.t, diagonal_dimensions.t[section_index], shield_plate_dimensions.t, shield_plate_dimensions.slotted_hole_edge_distance)
 
+        else
+            throw(ArgumentError("unknown connection type $(connection_types[i])"))
         end
 
     end
@@ -404,131 +350,88 @@ function calculate_connection_strength_series(connection_types, diagonal_section
 end
 
 
-function calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions)
+#### chords
 
-    Ag = chord_section_properties.A 
+# Pcrℓ / Pcrd (and their CUFSM models) default to the package's stored chord buckling results for the chord
+# thickness (assets/chord_buckling_results); pass them to use other elastic buckling loads.
+function calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions; Pcrℓ = nothing, Pcrd = nothing, local_buckling_model = nothing, distortional_buckling_model = nothing)
+
+    Ag = chord_section_properties.A
     Py_chord = Ag * joist_material_properties.fy
 
-    E = joist_material_properties.E 
+    E = joist_material_properties.E
     Ixx = chord_section_properties.Ixx
     Iyy = chord_section_properties.Iyy
     Lx = unbraced_lengths.Lx
     Ly = unbraced_lengths.Ly
 
-    Fcre(E, I, L) = π^2 * E * I / L^2 / Ag
+    Fcre_flexural(E, I, L) = π^2 * E * I / L^2 / Ag
 
-    Fcre_xx = Fcre(E, Ixx, Ly)
-    Fcre_yy = Fcre(E, Iyy, Lx)
+    Fcre_xx = Fcre_flexural(E, Ixx, Ly)
+    Fcre_yy = Fcre_flexural(E, Iyy, Lx)
 
-    # println("Fcre_xx", Fcre_xx)
-    #  println("Fcre_yy", Fcre_yy)
+    Fcre = min(Fcre_xx, Fcre_yy)
 
-    Fcre = minimum([Fcre_xx, Fcre_yy])
+    global_ = DesignCode.compression_global(Fcre, joist_material_properties.fy, Ag, design_code)     #E2
 
+    if Pcrℓ === nothing || Pcrd === nothing
+        chord_buckling_results = deserialize(joinpath(@__DIR__, "..", "assets", "chord_buckling_results"))
+        stored = chord_buckling_results[chord_dimensions.t]
+    end
 
-    Pne_chord, ePne_chord = AISIS100.v16.e2(Fcre=Fcre, Fy=joist_material_properties.fy, Ag=Ag, design_code=design_code)
+    if Pcrℓ === nothing
+        Pcrℓ = stored.local_buckling.Pcr
+        local_buckling_model = stored.local_buckling.model
+    end
 
-    
-    chord_buckling_results = deserialize(joinpath(@__DIR__, "..", "assets", "chord_buckling_results"))
+    if Pcrd === nothing
+        Pcrd = stored.distortional_buckling.Pcr
+        distortional_buckling_model = stored.distortional_buckling.model
+    end
 
-    # lengths = collect(0.25*3.0:3.0/20:1.25*3.0)
-    # chord_local_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_local_buckling_properties")
-    # Pcrℓ_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrl")
-    # Pcrℓ_chord, chord_local_buckling =  Properties.calculate_chord_cross_section_buckling_load(chord_dimensions, joist_material_properties, lengths)
+    local_ = DesignCode.compression_local(global_.Rn, Pcrℓ, design_code)                  #E3.2
+    distortional = DesignCode.compression_distortional(Py_chord, Pcrd, design_code)       #E4
 
-    # mode_label = ["L"]
-    # lengths = 10.0 .^ range(log10(0.5), log10(5.0), length=10)
-    
-    t = chord_dimensions.t 
-    # E = joist_material_properties.E
-    # ν = joist_material_properties.ν 
-    # x = [chord_dimensions.centerline_cross_section_coordinates[i][1] for i in eachindex(chord_dimensions.centerline_cross_section_coordinates)]
-    # y = [chord_dimensions.centerline_cross_section_coordinates[i][2] for i in eachindex(chord_dimensions.centerline_cross_section_coordinates)]
-    # results = Properties.calculate_chord_cross_section_buckling_load(t, E, ν, x, y, mode_label, lengths)
+    ePn = min(local_.eRn, distortional.eRn)
 
-    Pcrℓ_chord = chord_buckling_results[t].local_buckling.Pcr
-    chord_local_buckling = chord_buckling_results[t].local_buckling.model
-
-    Pnℓ_chord, ePnℓ_chord = AISIS100.v16.e321(Pne=Pne_chord, Pcrℓ=Pcrℓ_chord, design_code=design_code)
-
-
-    # lengths = collect(26.0:1.0:34.0)
-    # Pcrd_chord, chord_distortional_buckling =  Properties.calculate_chord_cross_section_buckling_load(chord_dimensions, joist_material_properties, lengths)
-        
-    # mode_label = ["D"]
-    # lengths = 10.0 .^ range(log10(10), log10(50.0), length=30)
-
-    # results = Properties.calculate_chord_cross_section_buckling_load(t, E, ν, x, y, mode_label, lengths)
-    # # Pcrℓ_chord = results.Pcr 
-    # # chord_local_buckling = results.model
-
-    # # chord_distortional_buckling = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_distortional_buckling_properties")
-    # # Pcrd_chord = deserialize("/Users/crismoen/.julia/dev/MarkoJIT/assets/chord_Pcrd")
-
-    Pcrd_chord = chord_buckling_results[t].distortional_buckling.Pcr
-    chord_distortional_buckling = chord_buckling_results[t].distortional_buckling.model
-    # chord_distortional_buckling = results.model 
-    # Pcrd_chord = results.Pcr
-
-    Pnd_chord, ePnd_chord = AISIS100.v16.e41(Py=Py_chord, Pcrd=Pcrd_chord, design_code=design_code)
-
-    ePn = minimum([ePnℓ_chord, ePnd_chord])
-
-    chord_compressive_strength = ChordCompression(Ag=Ag, Py=Py_chord, Pne=Pne_chord, ePne=ePne_chord, Pcrℓ=Pcrℓ_chord, local_buckling_properties=chord_local_buckling, Pnℓ=Pnℓ_chord, ePnℓ=ePnℓ_chord, Pcrd=Pcrd_chord, distortional_buckling_properties=chord_distortional_buckling, Pnd=Pnd_chord, ePnd=ePnd_chord, ePn=ePn)
-
-    return chord_compressive_strength
+    return ChordCompression(Ag=Ag, Py=Py_chord, Pne=global_.Rn, ePne=global_.eRn, Pcrℓ=Pcrℓ, local_buckling_properties=local_buckling_model, Pnℓ=local_.Rn, ePnℓ=local_.eRn, Pcrd=Pcrd, distortional_buckling_properties=distortional_buckling_model, Pnd=distortional.Rn, ePnd=distortional.eRn, ePn=ePn)
 
 end
 
-function calculate_chord_splice_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord)
+function calculate_chord_splice_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord; num_bolts = 12)
 
-    Ab = π * (bolt_diameter/2)^2
-    Pn_bolt, ePn_bolt = AISIS100.v16.appAj341(Ab = Ab, Fn = Fnv, design_code = design_code)
-
-	C = AISIS100.v16.tablej3311(d=bolt_diameter*u"inch", t=minimum([t_splice, t_chord])*u"inch", hole_shape = "standard hole")
-	
-	mf = AISIS100.v16.tablej3312(connection_type="single shear", hole_shape="standard hole", washers="no")
-	
-	Pnb, ePnb = AISIS100.v16.j3311(C=C, mf=mf, d=bolt_diameter, t=minimum([t_splice, t_chord]), Fu=Fu, design_code=design_code)
-	
-    limit_state_strengths = (bolt_shear=ePn_bolt, bolt_bearing=ePnb)
-
-    eRn = minimum([ePn_bolt; ePnb]) * 12
-
-    connection_strength = UnreinforcedConnection(Ab=Ab, Fnv=Fnv, Pn_bolt=Pn_bolt, ePn_bolt=ePn_bolt, C=C, mf=mf, Pnb=Pnb, ePnb=ePnb, limit_state_strengths = limit_state_strengths, num_bolts=12, eRn=eRn) 
-	
-	return connection_strength
+    return calculate_bolted_connection_strength(bolt_diameter, Fnv, Fu, design_code, t_splice, t_chord, num_bolts)
 
 end
 
 function calculate_chord_tensile_strength(chord_section_properties, chord_dimensions, joist_material_properties, design_code)
 
     Ag = chord_section_properties.A
-    Tn_y, eTn_y = AISIS100.v16.d21(Ag=Ag, Fy=joist_material_properties.fy, design_code=design_code)
+    yield = DesignCode.tension_yield(Ag, joist_material_properties.fy, design_code)          #D2
 
     Anet = Ag - chord_dimensions.flange_punchout_width * chord_dimensions.t
 
-    Tn_u, eTn_u = AISIS100.v16.d31(An=Anet, Fu=joist_material_properties.fu, design_code=design_code)
+    rupture = DesignCode.tension_rupture(Anet, joist_material_properties.fu, design_code)    #D3
 
-    eTn = minimum([eTn_y, eTn_u])
+    eTn = min(yield.eRn, rupture.eRn)
 
-    chord_tensile_strength = ChordTension(Ag=Ag, Tn_y=Tn_y, eTn_y=eTn_y, Anet=Anet, Tn_u=Tn_u, eTn_u=eTn_u, eTn=eTn)
-
-    return chord_tensile_strength
+    return ChordTension(Ag=Ag, Tn_y=yield.Rn, eTn_y=yield.eRn, Anet=Anet, Tn_u=rupture.Rn, eTn_u=rupture.eRn, eTn=eTn)
 
 end
 
 
+#### bearing seat
+
 function calculate_bearing_seat_weld_strength(weld, bearing_seat_dimensions, joist_material_properties, girder_dimensions, girder_material_properties, design_code)
 
     loading_direction = "longitudinal"
-    Pnv1, Pnv2, Pn, Pnv, ePnv = AISIS100.v16.j25(L=weld.length*u"inch", t1=bearing_seat_dimensions.t*u"inch", Fu1=joist_material_properties.fu, t2=girder_dimensions.top_flange_thickness*u"inch", Fu2=girder_material_properties.fu, tw=0.707*weld.t*u"inch", Fxx=weld.Fxx, loading_direction=loading_direction, design_code=design_code) 
+    tw = 0.707 * weld.t
 
-    eRn = ePnv * weld.num_lines
+    w = DesignCode.fillet_weld(weld.length, bearing_seat_dimensions.t, joist_material_properties.fu, girder_dimensions.top_flange_thickness, girder_material_properties.fu, tw, weld.Fxx, loading_direction, design_code)   #J2.5 (S100-16) / J2.6 (S100-2024)
 
-    bearing_seat_weld_strength = BearingSeatWeld(L=weld.length, t1=bearing_seat_dimensions.t, Fu1=joist_material_properties.fu, t2=girder_dimensions.top_flange_thickness, Fu2=girder_material_properties.fu, tw=0.707*weld.t, Fxx=weld.Fxx, loading_direction=loading_direction, Pnv1=ustrip(Pnv1), Pnv2=ustrip(Pnv2), Pn=ustrip(Pn), Pnv=ustrip(Pnv), ePnv=ustrip(ePnv), num_weld_lines=weld.num_lines, eRn=ustrip(eRn))
+    eRn = w.eRn * weld.num_lines
 
-    return bearing_seat_weld_strength
+    return BearingSeatWeld(L=weld.length, t1=bearing_seat_dimensions.t, Fu1=joist_material_properties.fu, t2=girder_dimensions.top_flange_thickness, Fu2=girder_material_properties.fu, tw=tw, Fxx=weld.Fxx, loading_direction=loading_direction, Pnv1=w.Pnv1, Pnv2=w.Pnv2, Pn=w.Pn, Pnv=w.Rn, ePnv=w.eRn, num_weld_lines=weld.num_lines, eRn=eRn)
 
 end
 
@@ -536,9 +439,9 @@ end
 function plate_buckling_stress(;k, E, ν, t, b)
 
 	fcr = k*π^2*E/(12*(1-ν^2))*(t/b)^2
-	
+
 	return fcr
-	
+
 end
 
 function calculate_bearing_seat_compression_field_strength(joist_material_properties, bearing_seat_dimensions, design_code)
@@ -549,40 +452,26 @@ function calculate_bearing_seat_compression_field_strength(joist_material_proper
 
     Pcrℓ = bearing_seat_dimensions.t * compression_field_width * fcrℓ
     Pne = bearing_seat_dimensions.t * compression_field_width * joist_material_properties.fy
-    Pnℓ, ePnℓ = AISIS100.v16.e321(Pne = Pne, Pcrℓ = Pcrℓ, design_code=design_code)
+    local_ = DesignCode.compression_local(Pne, Pcrℓ, design_code)      #E3.2
 
-    eRn = ePnℓ * bearing_seat_dimensions.num_webs
+    eRn = local_.eRn * bearing_seat_dimensions.num_webs
 
-    bearing_seat_compression_field_strength = BearingSeatCompression(compression_field_width=compression_field_width, fcrℓ=fcrℓ, fy=joist_material_properties.fy, Pcrℓ=Pcrℓ, Pne=Pne, Pnℓ=Pnℓ, ePnℓ=ePnℓ, num_bearing_seat_webs=bearing_seat_dimensions.num_webs, eRn=eRn)
-
-    return bearing_seat_compression_field_strength
+    return BearingSeatCompression(compression_field_width=compression_field_width, fcrℓ=fcrℓ, fy=joist_material_properties.fy, Pcrℓ=Pcrℓ, Pne=Pne, Pnℓ=local_.Rn, ePnℓ=local_.eRn, num_bearing_seat_webs=bearing_seat_dimensions.num_webs, eRn=eRn)
 
 end
 
 function calculate_bearing_seat_chord_connection_strength(joist_dimensions, bolt_properties, joist_material_properties, design_code, bearing_seat_dimensions, chord_dimensions)
 
     joist_ends = Geometry.define_joist_ends(joist_dimensions.span_length, joist_dimensions.node_spacing)
-    if joist_ends[1] == 72.0
-        num_bolts = 4
-    else
-        num_bolts = 3
+
+    strengths = map(joist_ends) do joist_end
+        num_bolts = joist_end == 72.0 ? 4 : 3
+        calculate_bolted_connection_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, chord_dimensions.t, num_bolts)
     end
 
-    bearing_seat_chord_connection_strength_1 = Strength.calculate_bolted_connection_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, chord_dimensions.t, num_bolts)
-
-    if joist_ends[2] == 72.0
-        num_bolts = 4
-    else
-        num_bolts = 3
-    end
-
-    bearing_seat_chord_connection_strength_2 = Strength.calculate_bolted_connection_strength(bolt_properties.diameter, bolt_properties.Fnv, joist_material_properties.fu, design_code, bearing_seat_dimensions.t, chord_dimensions.t, num_bolts)
-
-    bearing_seat_chord_connection_strength = [bearing_seat_chord_connection_strength_1, bearing_seat_chord_connection_strength_2]
-
-    return bearing_seat_chord_connection_strength
+    return collect(strengths)
 
 end
 
 
-end  #module 
+end  #module

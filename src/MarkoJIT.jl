@@ -13,6 +13,10 @@ export Model
 include("Model.jl")
 using .Model
 
+export DesignCode
+include("DesignCode.jl")
+using .DesignCode
+
 export Strength
 include("Strength.jl")
 using .Strength

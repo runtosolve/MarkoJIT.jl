@@ -127,8 +127,10 @@ function calculate_demand_to_capacity(demand, capacity)
 end
 
 
-function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_lengths)
+function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, diagonal_dimensions, bolt_properties, shield_plate_dimensions, diagonal_sections, diagonal_bracing, bearing_seat_dimensions, chord_splice_dimensions,  girder_dimensions, girder_material_properties, bearing_seat_weld_properties, joist_material_properties, top_chord_connections, bottom_chord_connections, unbraced_lengths; chord_Pcrℓ = nothing, chord_Pcrd = nothing)
 
+    # design_code selects the AISI S100 edition and method, e.g. "AISI S100-16 ASD" or "AISI S100-24 ASD" (see DesignCode.jl)
+    MarkoJIT.DesignCode.spec(design_code)
 
     joist_end_types = MarkoJIT.Geometry.define_joist_ends(joist_dimensions.span_length, joist_dimensions.node_spacing)
 
@@ -192,7 +194,7 @@ function evaluate_joist_span(design_code, joist_dimensions, chord_dimensions, di
     diagonal_compressive_strength = Strength.calculate_all_diagonal_compressive_strengths(diagonal_sections, diagonal_dimensions, Lu, Pcre_diagonal, diagonal_global_buckling, Pcrℓ_diagonal, diagonal_local_buckling, diagonal_section_properties, joist_material_properties.fy, design_code)
 
     ####chord strength
-    chord_compressive_strength = Strength.calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions)
+    chord_compressive_strength = Strength.calculate_chord_compressive_strength(chord_section_properties, joist_material_properties, design_code, unbraced_lengths, chord_dimensions; Pcrℓ = chord_Pcrℓ, Pcrd = chord_Pcrd)
 
     #chord tensile strength 
     chord_tensile_strength = Strength.calculate_chord_tensile_strength(chord_section_properties, chord_dimensions, joist_material_properties, design_code)
